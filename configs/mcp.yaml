@@ -33,9 +33,9 @@ mcp:
     DATA: [configure, copy_and_register_remote_file, reconcile, register_path, start_tiled_server, stop_tiled_server]
     # Until first light's sign test settles the CEOS correction's sign and units, a person approves each write. The
     # hardware's allow_corrector_writes still decides whether the corrector takes one at all.
-    CEOSCorrector: [correct_aberration, measure_c1a1, acquire_tableau]
-    DigitalTwinCorrector: [correct_aberration, measure_c1a1, acquire_tableau]
-  permissions_file: outputs/permissions/permissions.json
+    CEOSCorrector: [correct, correct_aberration, measure_aberrations, measure_c1a1, acquire_tableau]
+    DigitalTwinCorrector: [correct, correct_aberration, measure_aberrations, measure_c1a1, acquire_tableau]
+  permissions_file: ../outputs/permissions/permissions.json
   approval_ttl_s: 600
   include_only_functions: []
   tool_log: ""

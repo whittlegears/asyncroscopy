@@ -91,7 +91,6 @@ class YamlJob(JobDevice):
         names = list(self.spec.settings)
         return dict(zip(names, (reply.value for reply in self._instrument().read_attributes(names)), strict=True))
 
-    # job hooks
     def _plan(self, job: dict) -> JobPlan:
         plan = self._plans.get(job["reservation_id"])
         if plan is None:
@@ -124,7 +123,6 @@ class YamlJob(JobDevice):
     def phase(self, job: dict) -> str | None:
         return f"{self._plan(job).job.name}: acquiring" if job.get("state") == "running" else None
 
-    # the instrument's step protocol
     def _renew_hold(self, token: str, lease_s: float, worker: threading.Thread) -> None:
         """Keep the hold while the job's worker lives. A device that dies stops renewing, and the hold lapses."""
         ended = self._holds[token]
@@ -187,7 +185,6 @@ class YamlJob(JobDevice):
                 problems.append(f"{name}: {exc}")
         return problems
 
-    # the job's life
     def on_start(self, job: dict) -> None:
         self._take_hold(job)
         for setting, value in self._plan(job).settings.items():

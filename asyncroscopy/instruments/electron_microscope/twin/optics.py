@@ -68,9 +68,14 @@ class FocusDrift:
         return float(c1), [float(a), float(b)]
 
 
+def target_aberrations() -> dict:
+    """pyTEMlib's Spectra300 target aberrations (nm), the starting point of every twin probe."""
+    return pt.get_target_aberrations("Spectra300", TARGET_ABERRATIONS_V)
+
+
 def aberrations_nm(corrector_coefficients: dict | None, voltage_v: float, extra_defocus_m: float) -> dict:
     """pyTEMlib aberration dict (nm) from corrector coefficients (m) plus a defocus offset."""
-    ab = pt.get_target_aberrations("Spectra300", TARGET_ABERRATIONS_V)
+    ab = target_aberrations()
     for source, destinations in CORRECTOR_TO_PYTEMLIB.items():
         values = (corrector_coefficients or {}).get(source)
         if values is None:

@@ -39,7 +39,6 @@ class YamlProfile(InstrumentProfile):
     plan_example = {"size_m": [3e-6, 3e-6], "fov_m": 1e-6, "overlap": 0.25}
     plan_fields = frozenset({"settings"})
 
-    # the device's description
     def _describe(self, settings: dict) -> dict:
         try:
             reply = json.loads(self.instrument().get_map_profile(json.dumps({"settings": settings})))
@@ -56,7 +55,6 @@ class YamlProfile(InstrumentProfile):
     def _info(plan: dict) -> dict:
         return plan["instrument"]
 
-    # plan
     def resolve(self, p: dict) -> None:
         settings = dict(p.get("settings") or {})
         info = self._describe(settings)
@@ -142,7 +140,6 @@ class YamlProfile(InstrumentProfile):
                 return {axis: float(list(arguments)[0])}
         return None
 
-    # run
     def _run(self, names: list[str]) -> None:
         device = self.instrument()
         for name in names:

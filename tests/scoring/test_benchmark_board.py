@@ -16,7 +16,7 @@ def results(started=100.0, model="m", git="abc", **workflows):
     for name, value in workflows.items():
         passed, of, extra = (*value, {})[:3]
         rows = [{"ok": i < passed, "seconds": 1.0, "caller": f"wf-{name}-{i}", "checks": {"called": {"ok": i < passed, "detail": ""}}} for i in range(of)]
-        entries[f"{name}/general"] = {"passed": passed, "of": of, "rows": rows, "capability": "imaging", **extra}
+        entries[f"{name}/general"] = {"passed": passed, "of": of, "rows": rows, "capability": "imaging", "task_hash": f"hash-{name}", **extra}
     return {"model": model, "stack": "twin", "git": git, "started": started, "workflows": entries}
 
 
@@ -211,3 +211,63 @@ def test_a_malformed_reference_call_is_named(tmp_path):
 
 def test_kept_runs_go_under_outputs_which_git_ignores():
     assert board.HISTORY.parts[-3:] == ("outputs", "benchmarks", "history") and benchmark.HISTORY == board.HISTORY
+
+
+def test_an_edited_task_has_another_hash_and_compare_will_not_pair_across_it(tmp_path):
+    first = run_workflows.load_workflows([write(tmp_path, {**IMAGE, "reference": GOOD})])[0]
+    assert run_workflows.load_workflows([write(tmp_path, {**IMAGE, "reference": GOOD})])[0]["task_hash"] == first["task_hash"]
+    stricter = {**IMAGE, "checks": [{**IMAGE["checks"][0], "value": 1.0e-7}, *IMAGE["checks"][1:]], "reference": GOOD}
+    other_answer = {**IMAGE, "reference": {**GOOD, "answer": "Here: {result_2}."}}
+    hashes = {first["task_hash"]} | {run_workflows.load_workflows([write(tmp_path, wf)])[0]["task_hash"] for wf in (stricter, other_answer)}
+    assert len(hashes) == 3
+
+    old = results(started=1.0, git="old", a=(5, 5, {"task_hash": first["task_hash"]}), b=(5, 5), c=(5, 5, {"task_hash": None}))
+    new = results(started=2.0, git="new", a=(0, 5, {"task_hash": "edited"}), b=(2, 5), c=(0, 5))
+    change = board.compare(new, old)
+    assert change["shared"] == 1 and change["task_changed"] == ["a/general"] and change["task_unknown"] == ["c/general"]
+    assert change["worse"] == ["b/general"] and change["difference"] == pytest.approx(-0.6)
+    text = board.report(new, old)
+    assert "Not paired, the task changed: a/general." in text and "Not paired, a run records no task hash: c/general." in text
+
+    board.save_history(old, tmp_path / "history")
+    assert board.previous_run(results(started=3.0, a=(5, 5, {"task_hash": "edited"})), tmp_path / "history") is None
+    assert board.previous_run(results(started=3.0, b=(5, 5)), tmp_path / "history")["git"] == "old"
+
+
+def test_a_task_hash_covers_the_helpers_its_checks_call():
+    source = run_workflows.check_source(run_workflows.CHECKS["answer_states_reading"])
+    assert {"answer_states_reading", "_number", "lengths_in", "LENGTH_UNITS"} <= set(source)
+    assert all(name in vars(run_workflows.workflow_checks) for name in source)
+
+
+def test_the_results_name_each_evaluator_with_its_version():
+    from benchmarks.evaluate import get_evaluator
+
+    assert run_workflows.evaluator_versions(["time", "dose"]) == {"time": get_evaluator("time").version, "dose": get_evaluator("dose").version}
+
+
+@pytest.fixture
+def skills_env(monkeypatch, tmp_path):
+    for name, value in (("ASYNCROSCOPY_SKILLS", "0"), ("ASYNCROSCOPY_SKILLS_OFF", ""), ("ASYNCROSCOPY_SKILLS_PATH", ""),
+                        ("ASYNCROSCOPY_LAB_SKILLS", str(tmp_path / "lab")), ("ASYNCROSCOPY_AGENT_MEMORY", str(tmp_path / "memory"))):
+        monkeypatch.setenv(name, value)
+
+
+def test_skills_off_gives_the_agent_no_skill_and_a_list_allows_only_those(skills_env):
+    from langchain_core.messages import HumanMessage
+
+    from asyncroscopy.agents.skill_middleware import usable_skills
+
+    request = [HumanMessage("The image is blurry: autofocus and correct the astigmatism.")]
+    tools = {"Tuner_reserve", "Tuner_start", "Tuner_abort", "run_job", "wait_for_job", "view_data", "DigitalTwin_acquire_scanned_image"}
+    assert run_workflows.apply_skills("off", None) == {"on": False, "off": [], "enabled": []}
+    assert usable_skills(request, tools) == []
+
+    only_focus = run_workflows.apply_skills("focus", None)
+    assert only_focus["on"] is True and only_focus["enabled"] == ["focus"] and "focus" not in only_focus["off"]
+    assert [skill.name for skill in usable_skills(request, tools)] == ["focus"]
+
+    everything = run_workflows.apply_skills("on", "focus")
+    assert "focus" not in everything["enabled"] and len(everything["enabled"]) > 1 and everything["off"] == ["focus"]
+    with pytest.raises(run_workflows.WorkflowError, match="no skill"):
+        run_workflows.apply_skills("focus,no_such_skill", None)

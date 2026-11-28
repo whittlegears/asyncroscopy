@@ -27,6 +27,7 @@ from asyncroscopy.instruments.electron_microscope.digital_twin_base import (
     DEFAULT_ACQUISITION_DIR,
     ElectronMicroscopeTwin,
 )
+from asyncroscopy.instruments.electron_microscope.detectors.camera import CAMERA
 from asyncroscopy.instruments.electron_microscope.electron_microscope import check_defocus
 from asyncroscopy.instruments.electron_microscope.twin import (
     EdsParams,
@@ -39,6 +40,7 @@ from asyncroscopy.instruments.electron_microscope.twin.detector import (
     DetectorDrift,
     DetectorParams,
     count,
+    electrons_per_pixel,
 )
 from asyncroscopy.sim.dose import DoseParams
 from asyncroscopy.instruments.electron_microscope.twin.optics import FocusDrift, aberrations_nm
@@ -93,7 +95,6 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
     cold_start = _prop(bool, False, "Start as an instrument is found: column valves closed and the beam current not yet measured.")
     autofocus_residual_m = _prop(float, 1e-9, "Standard deviation (m) of the C1 and of each A1 component the simulated OptiSTEM leaves behind.")
     autofocus_frames = _prop(int, 8, "Frames the simulated OptiSTEM scans (at the SCAN settings); they count in the dose map and the clock.")
-    # Optics and detector
     acceleration_voltage = _prop(float, 300e3, "Acceleration voltage (V).")
     convergence_angle_mrad = _prop(float, 30.0, "Probe convergence semi-angle (mrad).")
     probe_current_pa = _prop(float, DEFAULT_BEAM_CURRENT_PA, "Probe current (pA); reported as the measured beam_current_pa.")
@@ -105,7 +106,6 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
     detector_read_noise = _prop(float, 0.0, "Gaussian read noise (counts).")
     detector_gain_drift = _prop(float, 0.0, "Largest slow swing of the scanning detectors' gain, as a fraction (0: steady).")
     detector_offset_drift = _prop(float, 0.0, "Largest slow swing of the scanning detectors' offset (counts; 0: steady).")
-    # Scan
     scan_flyback_time = _prop(float, 0.0, "Line flyback time (s).")
     scan_line_jitter_px = _prop(float, 0.0, "Per-line x jitter standard deviation (pixels).")
     scan_rotation_deg = _prop(float, 0.0, "Scan rotation relative to the stage (deg).")
@@ -114,21 +114,16 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
     fov_scale_error = _prop(float, 0.0, "Field-of-view calibration error (fraction).")
     # The errors, dynamics and drift of the stage belong to the STAGE device DigitalTwinSTAGE. The clock belongs to the microscope.
     time_scale = _prop(float, 0.0, "Real seconds slept per simulated second (0 = never wait).")
-    # EDS
     eds_fwhm_mn_ka = _prop(float, 130.0, "EDS resolution at Mn K-alpha (eV).")
     eds_solid_angle = _prop(float, 0.7, "EDS collection solid angle (sr).")
     eds_dead_time = _prop(float, 1e-6, "EDS paralyzable dead time (s).")
     eds_channels = _prop(int, 2048, "EDS channels.")
     eds_energy_max = _prop(float, 20000.0, "EDS energy range upper limit (eV).")
-    # Dose
     dose_tracking = _prop(bool, False, "Record dose and apply contamination/damage.")
     contamination_max = _prop(float, 0.0, "Carbon contamination thickness at saturation (m).")
     contamination_dose = _prop(float, 1e4, "Dose (e/A^2) for contamination to reach 63% of saturation.")
     damage_critical_dose = _prop(float, 0.0, "Dose (e/A^2) beyond which particles start to fade (0 = off).")
 
-    # ------------------------------------------------------------------
-    # Model construction
-    # ------------------------------------------------------------------
     def _check_properties(self) -> None:
         """Refuse impossible configuration at start-up, not with a cryptic error at the first image."""
         rules = [
@@ -253,27 +248,18 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
             "z_max": float(self.sample_size_z) / ANGSTROM / 2,
         }
 
-    # ------------------------------------------------------------------
-    # Stage as commanded, true and reported
-    # ------------------------------------------------------------------
     def _set_fov(self, fov) -> None:
         self._fov = float(fov)
 
     def _set_defocus(self, defocus) -> None:
         self._defocus = float(defocus)
 
-    # ------------------------------------------------------------------
-    # Image shift, stigmator and the simulated vendor autofocus
-    # ------------------------------------------------------------------
     def _set_stigmator(self, stigmator: list[float]) -> None:
         self._stigmator = np.asarray(stigmator, dtype=np.float64)
 
     def _get_stigmator(self) -> list[float]:
         return self._stigmator.tolist()
 
-    # ------------------------------------------------------------------
-    # The column: valves, fluorescent screen and the beam current measured on it
-    # ------------------------------------------------------------------
     def _set_column_valves(self, state: str) -> None:
         if str(state).lower() not in ("open", "close"):
             raise ValueError(f"column valves take 'open' or 'close', got {state!r}")
@@ -294,8 +280,7 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
         return self._column_valves_open and not self._screen_inserted
 
     def _get_screen_current(self) -> float:
-        """The current on the screen in pA: the beam current when the screen is inserted, 0 when it is not. A
-        reading above 0 is the measured beam current from then on."""
+        """The screen current in pA: the beam current with the screen inserted, else 0."""
         current = self._beam_current_pa() if self._screen_inserted else 0.0
         if current > 0:
             self._current_measured_s = self._clock.now()
@@ -312,8 +297,7 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
         """Nothing to calibrate: the twin sets the current it is told exactly."""
 
     def _beam_current(self) -> dict:
-        """As on the instrument with cold_start: assumed ("default") until the screen has read it, then measured
-        with the reading's age. Without cold_start the twin's current always counts as measured."""
+        """With cold_start "default" until the screen has read it, as on the instrument; else always measured."""
         if not bool(self.cold_start):
             return super()._beam_current()
         if self._current_measured_s is None:
@@ -357,9 +341,6 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
         self._defocus = check_defocus(self._defocus - truth["c1_m"] + rng.normal(0.0, residual), self.max_defocus)
         self._stigmator = self._stigmator - np.asarray(truth["a1_m"]) + rng.normal(0.0, residual, size=2)
 
-    # ------------------------------------------------------------------
-    # Imaging
-    # ------------------------------------------------------------------
     def _aberrations(self) -> dict:
         coefficients = None
         corrector = self._detector_proxies.get("corrector")
@@ -446,9 +427,74 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
             output_format=output_format,
         )
 
-    # ------------------------------------------------------------------
-    # EDS
-    # ------------------------------------------------------------------
+    def _acquire_camera_image(
+        self,
+        imsize: int,
+        exposure_time: float,
+        detector: str,
+        readout_area: str,
+        frame_combining: int = 1,
+        output_format: str = ".h5",
+    ) -> str:
+        """A conventional bright-field TEM image on the CAMERA device's settings: the illuminated field is the field of
+        view (set_fov), and the readout area reads its centre (Full all of it, Half half its width, Quarter a quarter)
+        onto imsize x imsize pixels. The beam current spreads evenly over the field, so a pixel's counts are the beam
+        current x exposure / e x (pixel / field of view)^2 x the fraction the objective aperture passes (the scanning BF
+        model, by reciprocity), with Poisson noise from the twin's seed. It is mass-thickness contrast only: no phase
+        contrast and no defocus, so it is refused at pixels below atomic_pixel_threshold."""
+        self._refuse_while_moving()
+        size, exposure = int(imsize), float(exposure_time)
+        fraction = {"full": 1.0, "half": 0.5, "quarter": 0.25}.get(str(readout_area).lower())
+        if size < 1 or fraction is None or not (np.isfinite(exposure) and exposure > 0):
+            raise ValueError(f"a camera image needs imsize >= 1, readout_area Full, Half or Quarter and exposure_time > 0 s, "
+                             f"got {imsize}, {readout_area!r}, {exposure_time}; nothing was acquired")
+        fov = float(self._fov)
+        field = fov * fraction
+        pixel = field / size
+        if pixel < float(self.atomic_pixel_threshold):
+            raise ValueError(f"the camera pixel would be {pixel:.3g} m, below atomic_pixel_threshold ({float(self.atomic_pixel_threshold):.3g} m): "
+                             "there a TEM image is phase contrast, which this twin does not simulate; set a larger field of view. Nothing was acquired")
+        self._fetch_stage(exposure)
+        self._acq_index += 1
+        index = self._acq_index
+        t0 = self._clock.now()
+        centre = self._beam_xy_at(t0 + exposure / 2.0)
+        offsets = (np.arange(size) + 0.5) * pixel - field / 2.0
+        xs, ys = np.meshgrid(centre[0] + offsets, centre[1] + offsets)
+        visible = self._specimen.in_box(float(xs.min()), float(xs.max()), float(ys.min()), float(ys.max()))
+        passed = self._renderer.transmission(xs, ys, pixel, self._support_angstrom(float(centre[0]), float(centre[1])),
+                                             self._dose.damage_factors(self._specimen.feature_centers, visible))
+        current = self._beam_current_pa()
+        detected = DetectorParams(beam_current_pa=current if self._beam_on_detector() else 0.0)
+        image = count(passed * (pixel / fov) ** 2, exposure, detected, self._rng.for_event("camera", index))
+        lit = (np.arange(size) + 0.5) * (fov / size) - fov / 2.0
+        lit_x, lit_y = np.meshgrid(centre[0] + lit, centre[1] + lit)
+        self._dose.add_frame(lit_x, lit_y, electrons_per_pixel(current, exposure) / size**2, fov / size)
+        self._clock.advance(exposure)
+        self._record_acquisition({
+            "index": index, "kind": "camera_image", "t_start_s": t0, "t_end_s": self._clock.now(),
+            "commanded_m": self._stage.commanded.tolist(), "reported_m": self._stage.reported.tolist(), "true_m": self._stage.true.tolist(),
+            "fov_m": field, "imsize": size, "exposure_s": exposure, "center_true_m": [float(centre[0]), float(centre[1])],
+        })
+        attrs = {
+            "units": "counts, one per detected electron",
+            "contrast": "bright-field mass-thickness; no phase contrast",
+            "acquisition_index": index,
+            "stage_reported_m": self._stage.reported.tolist(),
+            "image_shift_m": self._image_shift.tolist(),
+            "fov_m": field,
+            "illuminated_fov_m": fov,
+            "pixel_size_m": pixel,
+            "exposure_time_s": exposure,
+            "readout_area": str(readout_area),
+            "frame_combining": int(frame_combining),
+            "beam_current_pa": current,
+            "sim_time_start_s": t0,
+            "axes": "rows=+y, columns=+x",
+        }
+        return save_acquisition(self, self._detector_proxies.get("data"), "camera_image", str(detector), image,
+                                dataset_attrs=attrs, output_format=output_format)
+
     def _beam_sample_xy(self, t: float) -> np.ndarray:
         """Sample point under the beam at time t, from the fractional beam position."""
         fov = float(self._fov) * (1.0 + self._scan_params.fov_scale_error)
@@ -570,9 +616,6 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
                                   "reported_m": self._stage.reported.tolist(), "true_m": self._stage.true.tolist()})
         return key
 
-    # ------------------------------------------------------------------
-    # Status and ground truth
-    # ------------------------------------------------------------------
     def _viewport_metadata(self) -> dict:
         # The base class reads _stage_position, which here is the true pose. Report what the stage reports instead.
         metadata = super()._viewport_metadata()
@@ -589,7 +632,6 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
         parameters["time_scale"] = self._clock.time_scale
         # The twin delivers exactly its configured current, so it counts as measured. On AutoScript the measured value is the screen current.
         parameters.update(self.beam_current_fields())
-        parameters["beam_blanked"] = self._blanked
         parameters["column_valves"] = "Opened" if self._column_valves_open else "Closed"  # AutoScript's words
         parameters["screen"] = "Inserted" if self._screen_inserted else "Retracted"
         parameters["stage_moving"] = self._stage_moving()
@@ -598,7 +640,7 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
         return json.dumps(parameters)
 
     def _detectors(self) -> dict:
-        return {**super()._detectors(), "scanning": sorted(d.lower() for d in DETECTOR_SCALE)}
+        return {**super()._detectors(), "scanning": sorted(d.lower() for d in DETECTOR_SCALE), "camera": sorted(CAMERA._CAMERA_DETECTORS)}
 
     def _ground_truth(self) -> dict:
         """The particles, the true stage pose and the drift of every acquisition (export_ground_truth)."""

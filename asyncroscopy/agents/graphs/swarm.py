@@ -30,19 +30,20 @@ from asyncroscopy import settings
 from asyncroscopy.agents.profile import load_profile
 
 DEFAULT_MAX_STEPS = 10
-DEFAULT_OLLAMA_HOST = "http://localhost:11434"
+ollama_port = 11434
+DEFAULT_OLLAMA_HOST = f"http://localhost:{ollama_port}"
 
 
 def ollama_host() -> str:
-    """The Ollama server: OLLAMA_HOST, the variable the Ollama client behind ChatOllama reads, else localhost:11434.
-    A value without a scheme gets http://, and one without a port gets 11434, as the Ollama client does."""
+    """The Ollama server: OLLAMA_HOST, the variable the Ollama client behind ChatOllama reads, else DEFAULT_OLLAMA_HOST;
+    a missing scheme or port is filled in as the Ollama client does."""
     host = settings.get().ollama_host or DEFAULT_OLLAMA_HOST
     if "://" not in host:
         host = f"http://{host}"
     scheme, _, rest = host.partition("://")
     address = rest.split("/", 1)[0]
     if not address.rsplit("]", 1)[-1].count(":"):
-        rest = rest.replace(address, f"{address}:11434", 1)
+        rest = rest.replace(address, f"{address}:{ollama_port}", 1)
     return f"{scheme}://{rest}".rstrip("/")
 
 
@@ -101,7 +102,6 @@ def _on_model_end(state: _StreamState, event: dict) -> None:
     output = event["data"]["output"]
     tool_calls = getattr(output, "tool_calls", None) or []
     if not tool_calls:
-        # This round produced no tool calls, so it's the final answer
         state.final_content = (output.content or "").strip()
     print()
 
@@ -134,7 +134,6 @@ def _handle_stream_event(state: _StreamState, event: dict) -> None:
     """Update the stream state for one event from the agent."""
     kind = event["event"]
     if kind == "on_chat_model_start":
-        # A new model round is starting, so reset the first token timer.
         state.start_time = time.time()
         state.first_token_received = False
         return
@@ -204,7 +203,6 @@ class AgentSwarm:
         self._model = None
         self.startup_error: str | None = None
 
-    # startup
 
     @property
     def ready(self) -> bool:
@@ -270,7 +268,6 @@ class AgentSwarm:
         """Report a failure regardless of verbosity, since callers cannot see our state."""
         print(message, file=sys.stderr)
 
-    # MCP connectivity
 
     def add_tools(self, tools: list[BaseTool]) -> None:
         """Give the agents extra tools that run in this process."""
@@ -330,7 +327,6 @@ class AgentSwarm:
 
         await asyncio.to_thread(_sync_check)
 
-    # introspection
 
     @property
     def agents(self) -> list[str]:
@@ -349,7 +345,6 @@ class AgentSwarm:
         self.max_steps = int(max_steps)
         return self.max_steps
 
-    # public commands
 
     async def query(self, prompt: str, include_transcript: bool = True) -> str:
         """
@@ -402,7 +397,6 @@ class AgentSwarm:
             self._error(f"Failed to spawn agent: {e}")
             return ""
 
-    # message conversion
 
     @staticmethod
     def _openai_messages_to_langchain(messages: list[dict]) -> list[BaseMessage]:
@@ -450,7 +444,6 @@ class AgentSwarm:
             ]
         return result
 
-    # swarm internals
 
     def _get_agent_tools(self, allowed_patterns: list[str]) -> list:
         """Returnes a list of filtered tools based on the allowed glob patterns."""
@@ -594,12 +587,7 @@ class AgentSwarm:
         return builder.compile()
 
     async def _run_swarm(self, prompt: str, transcript: list[str] | None = None) -> str:
-        """
-        Run the agent swarm with a given prompt, returning the final response.
-
-        When `transcript` is supplied, it accumulates the run's routing decisions,
-        tool calls, and generated text for the caller to display.
-        """
+        """Run the swarm on ``prompt`` and return its final response; ``transcript`` collects what happened."""
         if not self._agents:
             return "Swarm Error: No agents available. Please use the spawn_agent tool to create at least one worker before querying."
 

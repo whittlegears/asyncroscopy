@@ -190,6 +190,9 @@ core  <-  contracts / trace / data / safety  <-  instruments / jobs  <-  mcp  <-
   `startup_scripts/run_pytemlib.py`): it stores, schedules and serves pyTEMlib's `image_tools`
   (stitching, scoring, placement). asyncroscopy only starts it and calls it over MCP; it keeps
   asyncroscopy's headers, job envelope and log format (`tests/analysis/test_analysis_server_contract.py`).
+* `agent/` at the repository root is not part of the package's code: it holds what people edit, the skills
+  (`agent/skills/<name>/SKILL.md`) and the shipped workflows (`agent/workflows/*.py`), read by `skills/registry.py` and
+  `workflows/graph.py` from `settings.agent_dir` (`agent/README.md`). `setup.py` copies it into a built wheel.
 * `settings.py` is the one place an `ASYNCROSCOPY_*` variable or output path is read (table in
   `docs/Operation/settings.md`); `settings.get()` reads the environment at call time, so nothing is read at import.
 

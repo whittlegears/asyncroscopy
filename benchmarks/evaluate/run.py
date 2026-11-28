@@ -19,10 +19,11 @@ from typing import Any
 
 import numpy as np
 
+from asyncroscopy.core.names import reply_keys
 from asyncroscopy.routines.dose import ELECTRON_CHARGE
+from asyncroscopy.sim.truth_score import inside_field, points_on_particles, particles as twin_particles
 
 DEFAULT_TRACE_DIR = "outputs/trace"
-KEY_FIELDS = ("key", "image_key", "spectrum_key", "result_key")
 
 
 @dataclass
@@ -82,7 +83,6 @@ class RunData:
     missing: dict[str, str] = field(default_factory=dict)
     _cache: dict[str, list[Image]] = field(default_factory=dict, repr=False)
 
-    # data
     def images(self, event: dict) -> list[Image]:
         """The 2-D images an event produced (none for a failed or dry-run event, or data that cannot be read)."""
         if not event.get("ok", True) or event.get("dry_run") or event.get("performed") is False:
@@ -124,7 +124,6 @@ class RunData:
                 out.append((event, image))
         return out
 
-    # ground truth, twin only
     def truth_record(self, image: Image) -> dict | None:
         """The twin's record of the acquisition behind ``image`` (true centre, timing), matched by acquisition index."""
         if not self.truth or image.index is None:
@@ -146,11 +145,7 @@ class RunData:
             return None
         cached = getattr(self, "_particles", None)
         if cached is None:
-            items = self.truth["particles"]
-            ids = np.array([int(p["id"]) for p in items])
-            centres = np.array([p["center_m"][:2] for p in items], dtype=np.float64)
-            radii = np.array([min(p.get("semi_axes_m", [1e-9])[:2]) for p in items], dtype=np.float64)
-            cached = self._particles = (ids, centres, radii)
+            cached = self._particles = twin_particles(self.truth)
         return cached
 
     def centre_m(self, image: Image) -> tuple[float, float] | None:
@@ -169,7 +164,6 @@ class RunData:
                 return float(value[0]), float(value[1])
         return None
 
-    # time
     def clock_span_s(self) -> float | None:
         """Instrument time from the first to the last event that carries the instrument's clock."""
         clocks = [float(e["clock_s"]) for e in self.events if e.get("clock") == "instrument" and isinstance(e.get("clock_s"), (int, float))]
@@ -187,10 +181,8 @@ class _TiledConfig:
 
 
 def data_keys(event: dict) -> list[str]:
-    """Data keys an event references: ``result_key``, and ``key``/``image_key``/``spectrum_key``/``keys`` in its result."""
-    keys: list[str] = []
-    if event.get("result_key"):
-        keys.append(str(event["result_key"]))
+    """Data keys an event references: ``result_key``, and what its JSON result names (``asyncroscopy.core.names.reply_keys``)."""
+    keys = [str(event["result_key"])] if event.get("result_key") else []
     result = event.get("result")
     if isinstance(result, str):
         try:
@@ -198,11 +190,7 @@ def data_keys(event: dict) -> list[str]:
         except ValueError:
             result = None
     if isinstance(result, dict):
-        for name in KEY_FIELDS:
-            if isinstance(result.get(name), str) and result[name]:
-                keys.append(result[name])
-        if isinstance(result.get("keys"), list):
-            keys += [str(k) for k in result["keys"] if isinstance(k, str)]
+        keys += reply_keys(result)
     return list(dict.fromkeys(keys))
 
 
@@ -250,7 +238,6 @@ def as_run_data(data: Any) -> RunData:
     raise TypeError(f"expected a RunData, a run id or a list of trace events, got {type(data).__name__}")
 
 
-# Features found in an image, matched to the twin's particles
 def detect_blobs(array: np.ndarray, k: float = 5.0, smooth_px: float = 1.0, background_px: float = 8.0) -> np.ndarray:
     """(row, col) of bright compact features: local maxima of a smoothed, background-subtracted image above k x noise.
 
@@ -280,13 +267,10 @@ def match_particles(data: RunData, image: Image, k: float = 5.0) -> dict | None:
     ids, centres, radii = particles
     rows, cols = image.array.shape
     half_x, half_y = cols * pixel / 2, rows * pixel / 2
-    inside = (np.abs(centres[:, 0] - centre[0]) < half_x) & (np.abs(centres[:, 1] - centre[1]) < half_y)
+    inside = inside_field(centres, centre, half_x, half_y)
     peaks = detect_blobs(image.array, k=k)
     found: list[int] = []
     if len(peaks) and inside.any():
         xy = np.stack([centre[0] - half_x + (peaks[:, 1] + 0.5) * pixel, centre[1] - half_y + (peaks[:, 0] + 0.5) * pixel], axis=1)
-        for i in np.where(inside)[0]:
-            distance = np.hypot(xy[:, 0] - centres[i, 0], xy[:, 1] - centres[i, 1]).min()
-            if distance <= max(radii[i], 2 * pixel):
-                found.append(int(ids[i]))
+        found = [int(ids[i]) for i in np.where(inside & points_on_particles(xy, centres, radii, 2 * pixel))[0]]
     return {"in_field": [int(v) for v in ids[inside]], "found": found, "detections": len(peaks)}

@@ -30,6 +30,8 @@ from fastmcp import Client
 from fastmcp.client.client import CallToolResult
 from fastmcp.client.transports import StreamableHttpTransport
 
+from asyncroscopy.core.names import DEFAULT_MCP_URL
+
 FAILURES: list[str] = []
 
 
@@ -49,6 +51,16 @@ def text(result: CallToolResult) -> str:
 
 async def call(client: Client, tool: str, args: dict | None = None, raise_on_error: bool = True) -> CallToolResult:
     return await client.call_tool(tool, args or {}, raise_on_error=raise_on_error)
+
+
+async def wait_for_job(agent: Client, job_id: str | None, timeout: float, **extra) -> dict:
+    status: dict = {}
+    deadline = time.time() + timeout
+    while job_id and time.time() < deadline:
+        status = json.loads(text(await call(agent, "wait_for_job", {"job_id": job_id, **extra})))
+        if status.get("state") in {"done", "failed", "aborted"}:
+            break
+    return status
 
 
 async def check_analysis(args: argparse.Namespace, run_key: str, agent: Client) -> None:
@@ -90,12 +102,7 @@ async def check_analysis(args: argparse.Namespace, run_key: str, agent: Client) 
         report("agent can mark a point on the map", "id" in poi, json.dumps(poi)[:160])
         # One wait covers every kind of job. The agent endpoint's wait_for_job also waits on analysis jobs.
         again = await structured("assemble_map", {"run": run_key})
-        status = {}
-        deadline = time.time() + args.timeout
-        while "job_id" in again and time.time() < deadline:
-            status = json.loads(text(await call(agent, "wait_for_job", {"job_id": again["job_id"]})))
-            if status.get("state") in {"done", "failed", "aborted"}:
-                break
+        status = await wait_for_job(agent, again.get("job_id"), args.timeout)
         report("wait_for_job waits on an analysis job and returns its map key", "_map" in status.get("result_keys", {}).get("map", ""), json.dumps(status)[:200])
 
 
@@ -160,13 +167,7 @@ async def check_map_job(args: argparse.Namespace, agent: Client) -> None:
     if report("Mapper reserves a plan", "reservation_id" in reserved, json.dumps(reserved.get("estimate", reserved.get("error")))):
         started = json.loads(text(await call(agent, "Mapper_start", {"request": json.dumps({"reservation_id": reserved["reservation_id"]})})))
         job_id = started.get("job_id")
-        deadline = time.time() + args.timeout
-        status = {}
-        while job_id and time.time() < deadline:
-            # wait_for_job waits on the server side so a model needs one call and not dozens.
-            status = json.loads(text(await call(agent, "wait_for_job", {"device": "Mapper", "job_id": job_id, "max_wait_s": 25})))
-            if status.get("state") in {"done", "failed", "aborted"}:
-                break
+        status = await wait_for_job(agent, job_id, args.timeout, device="Mapper", max_wait_s=25)
         report("map job finishes (via wait_for_job)", status.get("state") == "done", json.dumps(status))
         results = json.loads(text(await call(agent, "Mapper_results", {"request": json.dumps({"job_id": job_id})})))
         report("map run file is registered in Tiled", "run" in results.get("result_keys", {}), json.dumps(results.get("result_keys")))
@@ -179,12 +180,7 @@ async def check_run_job(args: argparse.Namespace, agent: Client) -> None:
     """Run a small map as one run_job call and wait for its run key."""
     tile = {"size_m": [2.4e-7, 2.4e-7], "fov_m": 1.6e-7, "imsize": 64, "dwell_s": 1e-6}
     ran = json.loads(text(await call(agent, "run_job", {"device": "Mapper", "plan": tile})))
-    status = {}
-    deadline = time.time() + args.timeout
-    while "job_id" in ran and time.time() < deadline:
-        status = json.loads(text(await call(agent, "wait_for_job", {"job_id": ran["job_id"]})))
-        if status.get("state") in {"done", "failed", "aborted"}:
-            break
+    status = await wait_for_job(agent, ran.get("job_id"), args.timeout)
     report("run_job then wait_for_job maps and returns the run key", "run" in status.get("result_keys", {}), json.dumps(status)[:200])
 
 
@@ -206,11 +202,7 @@ async def main(args: argparse.Namespace) -> int:
         microscope = await check_endpoints(agent, operator)
         if microscope is None:
             return len(FAILURES)
-
-        # A small map as one background job.
         await check_map_job(args, agent)
-
-        # The same as one run_job call. The wait's reply carries the results.
         await check_run_job(args, agent)
     print(f"\n{len(FAILURES)} failure(s)" + (": " + ", ".join(FAILURES) if FAILURES else ""))
     return len(FAILURES)
@@ -218,7 +210,7 @@ async def main(args: argparse.Namespace) -> int:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--agent", default="http://127.0.0.1:8000/mcp")
+    parser.add_argument("--agent", default=DEFAULT_MCP_URL)
     parser.add_argument("--operator", default="", help="Optional operator endpoint (configs/mcp_operator.yaml, e.g. http://127.0.0.1:8001/mcp) to also check.")
     parser.add_argument("--timeout", type=float, default=300.0, help="Seconds to wait for each job.")
     parser.add_argument("--analysis", default="", help="Analysis MCP server URL (e.g. http://127.0.0.1:8003/mcp) to also check stitching and scoring.")

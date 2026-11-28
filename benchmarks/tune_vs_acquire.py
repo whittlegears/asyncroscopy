@@ -34,7 +34,6 @@ import json
 import math
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -48,6 +47,7 @@ sys.path.insert(0, str(HERE.parent))
 import numpy as np
 import tango
 
+from benchmarks._common import git_head
 from benchmarks.evaluate import (
     RunData,
     get_evaluator,
@@ -65,7 +65,6 @@ from asyncroscopy.trace.stream import read_trace
 if TYPE_CHECKING:
     from tango.test_context import MultiDeviceTestContext
 
-# the study
 # Tuning budgets are the Tuner's search sizes for image_metric. "none" skips tuning.
 BUDGETS = {
     "none": None,
@@ -369,13 +368,6 @@ def markdown(results: dict) -> str:
             lines.append(f"Optimum for {objective}: **{best['budget']}** ({num(best['value'])} features, {num(best['tune_s'])} s tuning).")
         lines.append("")
     return "\n".join(lines) + "\n"
-
-
-def git_head() -> str:
-    try:
-        return subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=HERE.parent, check=False).stdout.strip() or "?"
-    except OSError:
-        return "?"
 
 
 def main(argv: list[str] | None = None) -> int:

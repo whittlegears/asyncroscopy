@@ -207,8 +207,7 @@ class SkillMiddleware(AgentMiddleware):
         return self._notes[request]
 
     def _budget(self, messages) -> int:
-        """Characters of skill text this prompt may carry: skills and memory notes share at most a quarter
-        of the context (and the profile's prompt_chars), so the request and the replies keep the rest."""
+        """Characters of skill text this prompt may carry: skills and memory share at most a quarter of the context."""
         share = min(self.limits.prompt_chars, context_chars(self.num_ctx) // 4)
         return max(1500, share - len(self._notes_for(_request(messages))))
 

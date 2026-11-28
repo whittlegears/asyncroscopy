@@ -21,6 +21,7 @@ import tango
 
 from asyncroscopy.mcp.endpoint_auth import AuthSettings, remote_without_auth
 from asyncroscopy.mcp.mcp_server import MCPServer
+from asyncroscopy.safety.permissions import PermissionStore
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -185,7 +186,6 @@ def trace(stack, role):
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] if path.exists() else []
 
 
-# refusals
 def test_no_token_is_refused(stack, keys):
     assert http_status(stack["agent"]) == 401 and http_status(stack["operator"]) == 401
     assert http_status(stack["agent"], token(keys, "alice", "instrument:read")) == 200
@@ -233,7 +233,6 @@ def test_a_token_without_an_expiry_is_refused(stack, keys):
     assert http_status(stack["agent"], forever) == 401
 
 
-# roles from the risk policy
 def test_a_read_token_can_get_stage_but_not_move_stage(stack, keys):
     tok = token(keys, "reader", "instrument:read")
     offered = tools(stack["agent"], tok)
@@ -257,19 +256,62 @@ def test_an_operate_token_moves_the_stage_and_the_trace_names_its_subject(stack,
     assert ran and ran[-1]["caller"] == "alice@example.org"
 
 
-def test_an_operator_only_command_needs_the_approve_role(stack, keys):
-    assert "DigitalTwin_export_ground_truth" not in tools(stack["agent"], token(keys, "operator-bob", "instrument:approve"))
-    for scopes in (["instrument:read"], ["instrument:operate"]):
+def test_the_twins_truth_and_the_run_pre_approvals_need_the_preapprove_role_and_nothing_else(stack, keys):
+    assert "DigitalTwin_export_ground_truth" not in tools(stack["agent"], token(keys, "workflow-server", "instrument:preapprove"))
+    for scopes in (["instrument:read"], ["instrument:operate"], ["instrument:approve"]):
         eve = token(keys, "eve", *scopes)
-        assert "DigitalTwin_export_ground_truth" not in tools(stack["operator"], eve)
+        assert not {"DigitalTwin_export_ground_truth", "preapprove_run", "end_run_preapproval"} & set(tools(stack["operator"], eve))
         error, text = call(stack["operator"], eve, "DigitalTwin_export_ground_truth")
-        assert error and "approve role" in text, text
-    bob = token(keys, "operator-bob", "instrument:approve")
-    assert "DigitalTwin_export_ground_truth" in tools(stack["operator"], bob)
-    error, text = call(stack["operator"], bob, "DigitalTwin_export_ground_truth")
+        assert error and "preapprove role" in text, text
+        error, text = call(stack["operator"], eve, "end_run_preapproval", {"run_id": "r1"})
+        assert error and "preapprove role" in text, text
+    server = token(keys, "workflow-server", "instrument:preapprove")
+    assert sorted(tools(stack["operator"], server)) == ["DigitalTwin_export_ground_truth", "end_run_preapproval", "preapprove_run"]
+    error, text = call(stack["operator"], server, "DigitalTwin_export_ground_truth")
     assert not error and "position" in text, text
+    error, text = call(stack["operator"], server, "approve_call", {"request_id": "x"})
+    assert error and "approve role" in text, text
     ran = [e for e in trace(stack, "operator") if e.get("action") == "DigitalTwin_export_ground_truth" and e.get("ok")]
-    assert ran and ran[-1]["caller"] == "operator-bob"
+    assert ran and ran[-1]["caller"] == "workflow-server"
+
+
+@pytest.mark.parametrize("name", ["list_pending_approvals", "approve_call", "deny_call", "get_permissions", "set_permission",
+                                  "set_group_permission"])
+def test_every_permission_tool_needs_the_approve_role(stack, keys, name):
+    arguments = {"approve_call": {"request_id": "x"}, "deny_call": {"request_id": "x", "reason": "r"},
+                 "set_permission": {"tool": "DigitalTwin_move_stage", "permission": "approve"},
+                 "set_group_permission": {"group": "acts", "permission": "approve"}}.get(name, {})
+    agent = token(keys, "agent-carol", "instrument:read", "instrument:operate")
+    assert name not in tools(stack["operator"], agent)
+    error, text = call(stack["operator"], agent, name, arguments)
+    assert error and "approve role" in text, text
+    error, text = call(stack["operator"], agent, "call_tool", {"name": name, "arguments": arguments})
+    assert error and "approve role" in text, text
+    assert name in tools(stack["operator"], token(keys, "operator-bob", "instrument:approve"))
+
+
+def test_a_caller_who_may_not_run_a_tool_queues_no_request_for_it(keys, tango_ctx, tmp_path, monkeypatch):
+    twin = FakeTwin()
+    database = type("Db", (), {"get_device_exported": lambda self, p: type("E", (), {"value_string": ["asyncroscopy/digitaltwin/default"]})()})()
+    monkeypatch.setattr("asyncroscopy.mcp.mcp_server.DeviceProxy", lambda name: twin)
+    server = MCPServer("auth-held", "localhost", 1, blocked_classes=[], needs_approval={"DigitalTwin": ["move_stage"]},
+                       data_device_address="d", verbose=False, endpoint_role="agent", database=database, auth=keys["auth"],
+                       permissions_file=str(tmp_path / "permissions.json"))
+    server.setup(print_summary=False)
+    live = LiveServer(server)
+    try:
+        reader = token(keys, "reader", "instrument:read")
+        move = {"position": [3, 0, 0, 0, 0]}
+        for name, arguments in (("DigitalTwin_move_stage", move), ("call_tool", {"name": "DigitalTwin_move_stage", "arguments": move})):
+            error, text = call(live.url, reader, name, arguments)
+            assert error and "operate role" in text, text
+        store = PermissionStore(tmp_path / "permissions.json", server.stack_id)
+        assert store.pending() == []
+        error, text = call(live.url, token(keys, "alice", "instrument:operate"), "DigitalTwin_move_stage", move)
+        assert error and "waiting for a person" in text, text
+        assert [p["requested_by"] for p in store.pending()] == ["alice"]
+    finally:
+        live.stop()
 
 
 def test_call_tool_needs_the_role_of_the_tool_it_runs(stack, keys):
@@ -301,19 +343,22 @@ def test_roles_follow_the_tool_descriptors():
     assert required_role(described(twin, "get_stage")) == "read"
     assert required_role(described(mapper, "job_status")) == "read"
     assert required_role(described(twin, "move_stage")) == "operate"
-    assert required_role(described(twin, "export_ground_truth")) == "approve"
+    assert required_role(described(twin, "export_ground_truth")) == "preapprove"
+    assert required_role(describe_native("preapprove_run")) == required_role(describe_native("end_run_preapproval")) == "preapprove"
     assert required_role(describe_native("run_job")) == "operate"
     assert required_role(describe_native("view_data")) == "read"
+    assert {required_role(describe_native(n)) for n in ("list_pending_approvals", "approve_call", "deny_call", "get_permissions",
+                                                         "set_permission", "set_group_permission")} == {"approve"}
     assert required_role(None) == "operate"  # a tool the endpoint does not know counts as high
 
 
-# the config
 def test_auth_config_is_checked(keys, tmp_path):
     good = keys["auth"]
     assert AuthSettings.from_config(None) is None and AuthSettings.from_config({}) is None
     settings = AuthSettings.from_config(good)
     assert settings.roles_of({"scope": "instrument:operate"}) == {"read", "operate"}
     assert settings.roles_of({"scp": ["instrument:approve"]}) == {"read", "approve"}
+    assert settings.roles_of({"scope": "instrument:preapprove"}) == {"preapprove"}
     assert settings.roles_of({"scope": "openid"}) == set()
     custom = AuthSettings.from_config({**good, "roles": {"operate": ["stem:drive"]}, "role_claims": "groups"})
     assert custom.roles_of({"groups": ["stem:drive"]}) == {"operate"}
@@ -349,7 +394,6 @@ def test_without_auth_nothing_changes(monkeypatch):
     assert server.caller() == "general-agent"
 
 
-# run_mcp refuses open hardware without auth
 def test_remote_without_auth_rule():
     assert remote_without_auth("0.0.0.0", simulated=False, auth=None)
     assert remote_without_auth("192.0.2.5", simulated=False, auth=None)
@@ -409,7 +453,6 @@ def test_mcp_server_main_refuses_too(monkeypatch, capsys):
     assert "MCP ERROR" in capsys.readouterr().out
 
 
-# agents send the token
 def test_agents_send_the_token(monkeypatch):
     from asyncroscopy.agents.config import AgentConfig
     from asyncroscopy.agents.mcp_tools import McpServer

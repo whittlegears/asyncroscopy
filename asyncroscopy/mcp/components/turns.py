@@ -146,7 +146,7 @@ class Turns:
     def natives(self) -> list:
         return [] if self.server.endpoint_role == "monitor" else [self.take_turn, self.give_turn, self.turn_status]
 
-    def _run(self) -> str:
+    def _run_id(self) -> str:
         run = self.server.run_id()
         if not run:
             raise ToolError("take_turn and give_turn need a run id: send the X-Asyncroscopy-Run header with every call of the run "
@@ -169,7 +169,7 @@ class Turns:
         again every few seconds: that keeps the place and takes the turn when it comes. While holding, call it again
         before ``lease_s`` seconds pass to keep the turn. ``what`` says what the run is, for whoever waits behind it."""
         started = time.time()
-        reply = self.queue.take(self._run(), self.server.caller(), str(what)[:200], lease_s)
+        reply = self.queue.take(self._run_id(), self.server.caller(), str(what)[:200], lease_s)
         if reply.pop("new", False):  # renewals and queue polls are not traced: there is one every few seconds
             self._trace("take_turn", started, arguments={"what": str(what)[:200]}, result="held")
         return reply
@@ -179,7 +179,7 @@ class Turns:
         """For agent programs, not models: give the instrument back when this run has finished acting on it, or leave
         the queue. Returns {"gave": "turn" | "place" | "nothing", "waiting"}."""
         started = time.time()
-        reply = self.queue.give(self._run())
+        reply = self.queue.give(self._run_id())
         if reply["gave"] == "turn":
             self._trace("give_turn", started, arguments={}, result=json.dumps(reply))
         return reply

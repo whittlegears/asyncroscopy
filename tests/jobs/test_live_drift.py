@@ -204,7 +204,6 @@ def test_tracking_is_refused_by_name_where_it_cannot_run(tango_ctx, mapper):
     call(mapper, "release", {"reservation_id": reserved["reservation_id"]})
 
 
-# The pure parts with no stack
 def test_the_linear_tracker_and_the_bounded_correction():
     tracker = LinearTracker({"window": 4})
     assert tracker.predict(10.0) == (0.0, 0.0)

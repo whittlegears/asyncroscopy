@@ -284,7 +284,7 @@ On an endpoint with several microscopes or Mappers, `ASYNCROSCOPY_MICROSCOPE` (f
 
 `wait_for_job` waits up to 25 s per call, and one agent run allows about 20 tool calls, so the agent can follow a job of a few minutes. For an hours-long job, tell it in the prompt or skill to report the job id and stop; check on it later with `job_status`.
 
-For a multi-step procedure, add a skill: a folder with a `SKILL.md`, under `asyncroscopy/skills/` or in a folder named by `ASYNCROSCOPY_SKILLS_PATH`. Copy `asyncroscopy/skills/mapping/SKILL.md` for the format. Set `requires:` to the tools the skill cannot work without (for example `[IndentGrid_reserve]`); a skill is offered only where those tools exist, so the indenter agent is never offered the STEM mapping skill.
+For a multi-step procedure, add a skill: a folder with a `SKILL.md`, under `agent/skills/` or in a folder named by `ASYNCROSCOPY_SKILLS_PATH`. Copy `agent/skills/mapping/SKILL.md` for the format. Set `requires:` to the tools the skill cannot work without (for example `[IndentGrid_reserve]`); a skill is offered only where those tools exist, so the indenter agent is never offered the STEM mapping skill.
 
 Programs that are not language models read the endpoint's `action_space()` instead: each tool with its canonical role (`stage.move`, `acquire.image`, `probe.retract`, ...), its arguments with units and ranges, what it observes, and the job plans. A controller that works by role runs on your instrument when your command names follow the rules there (`move_stage`, `get_stage`, `acquire_image`, `retract_tip`); for names that do not, or for units and ranges, add an `action_hints` attribute (a YAML file's `role:` key does it for you). See [action_space.md](../Operation/action_space.md).
 

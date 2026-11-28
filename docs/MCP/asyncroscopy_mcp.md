@@ -98,7 +98,7 @@ tool for each step of a job:
   tool-name globs to give a model (for this endpoint and its analysis server),
   computed by the same rules the general agent uses
   (`asyncroscopy/mcp/agent_tools.py`, with the lists of the agent profile
-  `asyncroscopy/agents/profiles/default.yaml`, or `mcp.agent_profile`): the curated STEM set on a STEM, else
+  `asyncroscopy/agents/profiles/capable.yaml`, or `mcp.agent_profile`): the curated STEM set on a STEM, else
   every tool but State/Status; never `endpoint_info`, `list_skills` or `skills_for`. Other
   harnesses (SciAgentGUI) give the model only these.
 - `action_space()`: for agent programs, not given to models: every tool with
@@ -148,13 +148,15 @@ AutoScript-specific MCP class.
 
 ## Command Names
 
-Tango commands are exposed as MCP tools using the device class and command name.
-For example:
+Tango commands are exposed as MCP tools named `<prefix>_<command>` (`asyncroscopy.core.names.tool_name`).
+The prefix is the device class. When several devices share a class, each gets `<Class>_<suffix>` so neither
+hides the other: the suffix is the member (`lab/mapper/2` gives `Mapper_2`), else the family when members
+repeat (`asyncroscopy/grid2/default` gives `Mapper_grid2`), else the whole device name. For example:
 
 ```text
-SCAN.State
-SCAN.Status
-AutoScriptMicroscope.acquire_scanned_image
+SCAN_State
+SCAN_Status
+AutoScriptMicroscope_acquire_scanned_image
 ```
 
 The exact tool set depends on which devices are exported in the Tango database

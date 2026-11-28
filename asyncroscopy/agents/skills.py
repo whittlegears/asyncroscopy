@@ -7,7 +7,7 @@
     uv run python -m asyncroscopy.agents.skills promote map_with_eds
     uv run python -m asyncroscopy.agents.skills promote map_with_eds --check-endpoint   # also check its tools are offered
 
-``list`` shows every skill: those shipped here, a lab's own ($ASYNCROSCOPY_SKILLS_PATH) and
+``list`` shows every skill: those shipped in agent/skills, a lab's own ($ASYNCROSCOPY_SKILLS_PATH) and
 the ones agents learned ($ASYNCROSCOPY_AGENT_MEMORY/skills, default outputs/agent_memory),
 with each one's status and any problem. A learned skill is a draft until promoted; only
 promoted ones are put in agents' prompts. ``lint`` checks a skill file the way promotion
@@ -58,7 +58,7 @@ def main(argv: list[str] | None = None) -> int:
         unreadable: list[str] = []
         learned = learned_skills(memory, unreadable)
         for skill in list_skills():
-            where = "learned" if skill.learned else ("lab" if not str(skill.path).startswith(str(Path(__file__).resolve().parents[1])) else "shipped")
+            where = skill.source
             acts = "acts" if skill.acts else "reads"
             print(f"{skill.name:28s} {where:8s} {acts:6s} {skill.version:8s} {skill.problem or skill.description}")
         for name, (_path, meta) in learned.items():

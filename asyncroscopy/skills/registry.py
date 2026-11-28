@@ -7,8 +7,10 @@ A fixed procedure (the same calls every time) is a LangGraph workflow (``asyncro
 the skill for it says when to run that workflow and how to read what comes back.
 
 A skill is a folder holding ``SKILL.md``: YAML front matter (name,
-description, version, min_asyncroscopy, envelope_schema, tools, requires,
-keywords, acts) followed by the manual in Markdown. ``acts`` says whether
+description, version, enabled, min_asyncroscopy, envelope_schema, tools, requires,
+keywords, acts) followed by the manual in Markdown. ``enabled: false`` switches it off: it is listed as
+unavailable and given to no agent. ``$ASYNCROSCOPY_SKILLS`` (every skill) and ``$ASYNCROSCOPY_SKILLS_OFF``
+(names or globs, which are not listed at all) come before it. ``acts`` says whether
 following the skill moves or exposes the instrument; when it is left out it
 is true if any of its ``tools`` is high risk by the safety policy. A request
 that only asks about data (``read_only_request``) never gets a skill that acts.
@@ -28,7 +30,8 @@ passages for that step (``asyncroscopy.skills.index``, see
 ``asyncroscopy.agents.skill_middleware``); ``load_skill`` remains for an
 agent whose matched skill did not fit, and for MCP clients.
 
-Skills come from this package's folders and from any directory listed in
+Skills come from ``<agent_dir>/skills`` (``$ASYNCROSCOPY_AGENT_DIR``, default the
+repository's ``agent/`` folder; see ``agent/README.md``) and from any directory listed in
 ``$ASYNCROSCOPY_SKILLS_PATH`` (``os.pathsep``-separated), so a lab can keep
 its own skills outside the repository; an outside skill replaces a packaged
 one with the same name. Each folder and file is read once and read again only when
@@ -82,6 +85,7 @@ class Skill:
     new_map: bool = False  # the procedure a request for a new map gets first
     source: str = "shipped"  # shipped, path ($ASYNCROSCOPY_SKILLS_PATH), lab (written from a client) or learned
     off: bool = False  # switched off on this endpoint (asyncroscopy.skills.lab.switch)
+    enabled: bool = True
 
     @property
     def available(self) -> bool:
@@ -141,8 +145,7 @@ def _skill_files(base: Path) -> list[Path]:
 
 
 def _cached_skill(path: Path) -> Skill:
-    """A copy of the parsed skill at ``path`` (callers set ``problem`` and ``learned`` on theirs), parsed once per file version.
-    A file that cannot be parsed raises as it did when first read."""
+    """A copy of the parsed skill at ``path``, parsed once per file version."""
     stamp = _stamp(path)
     cached = _parsed.get(path)
     if cached is None or cached[0] != stamp or stamp is None:
@@ -177,6 +180,7 @@ def _parse(path: Path) -> Skill:
         status=meta.get("status"),
         matched=bool(meta.get("matched", True)),
         new_map=bool(meta.get("new_map", False)),
+        enabled=bool(meta.get("enabled", True)),
     )
     # The skill says whether following it acts on the instrument.
     # One that does not say counts as acting, just as an unknown command counts as high risk.
@@ -188,17 +192,22 @@ def _parse(path: Path) -> Skill:
         skill.problem = f"written for envelope schema {skill.envelope_schema}, installed {ENVELOPE_VERSION}"
     if meta.get("run") is not None and skill.problem is None:
         skill.problem = ("its run list is a fixed procedure, and fixed procedures are LangGraph workflows now: write it as a workflow "
-                         "(asyncroscopy/workflows/graphs, or propose_workflow) and make this skill say when to run it")
+                         "(agent/workflows, or propose_workflow) and make this skill say when to run it")
     return skill
+
+
+def shipped_dir() -> Path:
+    """The shipped skills: ``<agent_dir>/skills`` (``$ASYNCROSCOPY_AGENT_DIR``, default the repository's ``agent/``)."""
+    return settings.get().agent_dir / "skills"
 
 
 def skill_dirs() -> list[Path]:
     """Folders skills are read from, in order: a later one's skill replaces an earlier one's of the same name."""
-    return [HERE, *settings.get().skills_path, settings.get().lab_skills]
+    return [shipped_dir(), *settings.get().skills_path, settings.get().lab_skills]
 
 
 def _source(base: Path) -> str:
-    if base == HERE:
+    if base == shipped_dir():
         return "shipped"
     return "lab" if base == settings.get().lab_skills else "path"
 
@@ -209,8 +218,9 @@ def learned_dir() -> Path:
 
 
 def list_skills(tool_names: set[str] | None = None) -> list[Skill]:
-    """Every skill found except those named in ``$ASYNCROSCOPY_SKILLS_OFF``. With ``tool_names``, skills whose
-    ``requires`` are not all offered, or that offers one of their ``unless``, are marked unavailable."""
+    """Every skill found except those named in ``$ASYNCROSCOPY_SKILLS_OFF``. A skill whose front matter says
+    ``enabled: false`` is listed as unavailable. With ``tool_names``, skills whose ``requires`` are not all offered,
+    or that offers one of their ``unless``, are marked unavailable too. ``$ASYNCROSCOPY_SKILLS`` off lists none."""
     skills: dict[str, Skill] = {}
     if not settings.get().skills:  # skills are switched off by $ASYNCROSCOPY_SKILLS
         return []
@@ -237,6 +247,9 @@ def list_skills(tool_names: set[str] | None = None) -> list[Skill]:
                 skills[skill.name] = skill
     off = settings.get().skills_off
     skills = {name: skill for name, skill in skills.items() if not any(fnmatch.fnmatchcase(name, p) for p in off)}
+    for skill in skills.values():
+        if not skill.enabled:
+            skill.problem = "disabled: enabled is false in its SKILL.md"
     from asyncroscopy.skills.lab import switched_off
 
     for name in switched_off() & skills.keys():  # still listed, so a client can switch it on again
@@ -263,7 +276,6 @@ def load_skill(name: str, tool_names: set[str] | None = None) -> str:
     raise KeyError(f"no skill named {name!r}; available: {[s.name for s in list_skills()]}")
 
 
-# matching a request
 STOP = frozenset(
     "a an and are as at be by do for from how i in into is it its me my of on or our please so that the their them then this to "
     "up us use using we what when where which with you your can could would should will".split()

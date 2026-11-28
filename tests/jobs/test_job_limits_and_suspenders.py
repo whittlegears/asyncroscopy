@@ -112,7 +112,6 @@ def stage(low=-1e-3, high=1e-3):
     return FakeDevice(limits={"x": (low, high)})
 
 
-# limits at reserve
 def test_a_step_outside_the_stage_limits_is_refused_before_anything_is_reserved(tmp_path):
     job = Steps(tmp_path, {"test/stage/1": stage()})
     reply = job.call("reserve", {"plan": {"xs": [0.0, 5e-4, 2e-3, -3e-3]}})
@@ -171,7 +170,6 @@ def test_a_broken_step_targets_is_the_devices_error(tmp_path):
     assert reply["error"]["code"] == "device_error" and "step_targets" in reply["error"]["message"]
 
 
-# suspenders
 @pytest.mark.parametrize("text, problem", [
     ("{}", "JSON list"),
     ("[{\"attr\": \"beam/current\", \"min\": 1}]", "<domain>/<family>/<member>/<attribute>"),
@@ -294,7 +292,6 @@ def test_a_job_paused_when_the_device_restarted_comes_back_resumable(tmp_path):
     job.wait_for(job_id, {"aborted"})
 
 
-# dry runs
 class FakeAfm:
     """An SPM as a DeviceProxy: get_image scans the tip, despite its read-only name."""
 
@@ -367,7 +364,6 @@ def test_a_device_that_cannot_rehearse_refuses_a_dry_run_at_reserve(tmp_path):
     assert job._jobs == {}
 
 
-# job state on disk
 def test_the_plan_is_written_once_and_a_finished_job_is_opened_only_when_asked_for(tmp_path):
     job = Steps(tmp_path, {"test/stage/1": stage()})
     reservation = job.call("reserve", {"plan": {"xs": [0.0, 1e-4, 2e-4]}})["reservation_id"]

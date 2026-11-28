@@ -9,11 +9,10 @@ import math
 from tango import DevState
 from tango.server import device_property
 
+from asyncroscopy.core.names import autoscript_port
 from asyncroscopy.instruments.electron_microscope.hardware.stage import STAGE
 from asyncroscopy.utils.commands import command
-# AutoScript imports — only available on the microscope PC.
-# Wrapped in try/except so the device can still be imported and tested
-# on a development machine without AutoScript installed.
+# AutoScript is installed only on the microscope PC; elsewhere the device still imports for tests.
 try:
     from autoscript_tem_microscope_client import TemMicroscopeClient
     from autoscript_tem_microscope_client.enumerations import StageAxis
@@ -45,9 +44,6 @@ class AutoScriptSTAGE(STAGE):
     hardware boundary.
     """
 
-    # ------------------------------------------------------------------
-    # Device properties — set per-deployment in the Tango DB
-    # ------------------------------------------------------------------
     hardware_host = device_property(
         dtype=str,
         default_value="",
@@ -56,7 +52,7 @@ class AutoScriptSTAGE(STAGE):
     )
     hardware_port = device_property(
         dtype=int,
-        default_value=9095,
+        default_value=autoscript_port,
         doc="Port of the AutoScript microscope server",
     )
     simulated = device_property(
@@ -66,13 +62,6 @@ class AutoScriptSTAGE(STAGE):
         "False (real hardware): a stage without AutoScript is in FAULT.",
     )
 
-    # ------------------------------------------------------------------
-    # Attributes
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
-    # Initialisation
-    # ------------------------------------------------------------------
 
     def _connect(self) -> None:
         self._connect_autoscript()
@@ -125,9 +114,6 @@ class AutoScriptSTAGE(STAGE):
             self.set_status(f"Not connected to AutoScript at {self.hardware_host}:{self.hardware_port}: {exc}")
             self.error_stream(f"AutoScript STAGE connection failed: {exc}")
 
-    # ------------------------------------------------------------------
-    # Attribute read / write
-    # ------------------------------------------------------------------
 
     def _read_position(self) -> list[float]:
         """Read [x, y, z, alpha, beta] from AutoScript, exposing tilts in degrees."""
@@ -197,9 +183,6 @@ class AutoScriptSTAGE(STAGE):
         else:
             return False
 
-# ----------------------------------------------------------------------
-# Server entry point
-# ----------------------------------------------------------------------
 
 AutoscriptSTAGE = AutoScriptSTAGE
 

@@ -4,10 +4,10 @@ asyncroscopy ships three LangGraph agents. All of them reach the instrument only
 
 | Profile | For | What it sets |
 | :-- | :-- | :-- |
-| `default` | A small local model (measured on qwen3:8b through Ollama, 8k context) | Two skills from the request and 7000 characters of skill text; `tool_gates` that hold back the note writers, the beam parkers and the pixel conversions unless the request asks for them; tool replies whose structured fields are replaced by sentences (`replies: notes`) |
-| `capable` (the default) | A larger local model (gemma4:31b through Ollama, 32k context) or a hosted one (`ASYNCROSCOPY_MODEL`, `ASYNCROSCOPY_MODEL_PROVIDER`) | Extends `default`: no tool gates, more skill text and memory, the servers' structured replies kept beside the sentences (`replies: facts_and_notes`). Not yet measured with the workflow benchmark |
+| `small` | A small local model (measured on qwen3:8b through Ollama, 8k context) | Two skills from the request and 7000 characters of skill text; `tool_gates` that hold back the note writers, the beam parkers and the pixel conversions unless the request asks for them; tool replies whose structured fields are replaced by sentences (`replies: notes`) |
+| `capable` (the default) | A larger local model (gemma4:31b through Ollama, 32k context) or a hosted one (`ASYNCROSCOPY_MODEL`, `ASYNCROSCOPY_MODEL_PROVIDER`) | Extends `small`: no tool gates, more skill text and memory, the servers' structured replies kept beside the sentences (`replies: facts_and_notes`). Not yet measured with the workflow benchmark |
 
-A profile can start from another with `extends: default` and set only what differs. Every profile keeps the rules that hold for any model: the tool selection, the claim check, the context guard, a read-only request getting no skill that acts, and one mapping procedure per endpoint (the Mapper job where there is a Mapper, the `map_grid` workflow elsewhere).
+A profile can start from another with `extends: small` and set only what differs. Every profile keeps the rules that hold for any model: the tool selection, the claim check, the context guard, a read-only request getting no skill that acts, and one mapping procedure per endpoint (the Mapper job where there is a Mapper, the `map_grid` workflow elsewhere).
 
 | Graph | Who decides the calls | Use it for |
 | :-- | :-- | :-- |
@@ -41,6 +41,16 @@ What the graphs do so a small model's context does not overflow (`asyncroscopy/a
 - Before every model call the messages are fitted to what the system prompt and the tool schemas leave: the system prompt, the first and the latest request and the latest tool reply (cut at 6000 characters) are kept; older tool replies become one-line digests, and the oldest finished rounds go first. The skills and memory notes share at most a quarter of the context.
 - A call repeated with the same arguments and the same result: the second time the model is told so in the prompt; the third time the run stops with an honest answer saying what was repeated, instead of looping to the recursion limit.
 
+The claim check (`asyncroscopy/agents/claims.py`) sends a correction when an answer claims what no call backs. Each rule came from a real answer:
+
+- a stitched map after the stitch failed (a 2704-tile map whose stitch timed out was "available");
+- a map called good or seamless when most tiles matched no neighbour (qwen3:8b called a map whose 100 tiles all sat where the stage reported them "of good quality");
+- no drift when the stitch could not measure it ("no drift detected" of a map whose tiles matched no neighbour);
+- a zoom on a spot answered without imaging it (the best point's position and score, never imaged);
+- a question of where things are answered without the positions a reply gave ("Here are their stage coordinates:" with none after a `list_pois` of 19 points).
+
+Which calls acquire or move is what the endpoint's catalog says, never what names suggest, so without the catalog these claims are not checked.
+
 `endpoint_info` (for agent programs, not given to models) reports each tool's risk as the risk policy sees it, the job devices and the analysis server. Agents read the analysis server's address from it, so `mcp.urls.analysis` in the MCP config (reported as `endpoint_info.urls.analysis`) is the one place it is set (`ASYNCROSCOPY_ANALYSIS_URL` overrides it); the goal checker and the benchmarks read risks from it, so a deployment's `mcp.safety.risk` overrides count everywhere.
 
 An endpoint with `mcp.auth` needs a bearer token: agents send `ASYNCROSCOPY_MCP_TOKEN` as `Authorization: Bearer` to the instrument and analysis endpoints, and the endpoint takes the caller from the token's subject instead of `ASYNCROSCOPY_CALLER`. See [Remote access](remote_access.md).
@@ -55,13 +65,13 @@ A small model loses track with many tools and long instructions, so the `team` g
    - `analyst`: stored data and maps: `list_data`, `view_data`, `assemble_map`, `score_map`, `map_info`, `get_region`, points of interest.
    - both: `wait_for_job`. Operator-only tools are never given to an agent.
 
-   The split is data in the agent profile (`team:` in `asyncroscopy/agents/profiles/default.yaml`: `roles`, `shared`, `hidden`). Whether a tool is a device command, an acquisition or a job's start comes from the endpoint's `endpoint_info` (`tools`, read once per run), never from the tool's name.
+   The split is data in the agent profile (`team:` in `asyncroscopy/agents/profiles/small.yaml`: `roles`, `shared`, `hidden`). Whether a tool is a device command, an acquisition or a job's start comes from the endpoint's `endpoint_info` (`tools`, read once per run), never from the tool's name.
 3. Each step sees what earlier steps produced as **facts from the servers' replies** (run keys, map keys, job states), not the previous agent's prose. A failed step is retried once with the error as feedback.
 4. **Reporter**: writes the answer from those facts only.
 
 ## Skills, found automatically
 
-Skills are short procedures in `asyncroscopy/skills/<name>/SKILL.md`. Agents never have to look for them: before every model call `SkillMiddleware` (`asyncroscopy/agents/skill_middleware.py`) decides, by fixed rules and without a model call, which skills apply and writes them into the prompt.
+Skills are short procedures in `agent/skills/<name>/SKILL.md` (see `agent/README.md`). Agents never have to look for them: before every model call `SkillMiddleware` (`asyncroscopy/agents/skill_middleware.py`) decides, by fixed rules and without a model call, which skills apply and writes them into the prompt.
 
 - From the request: the best one or two by `keywords`, name and description; a request for a new map always gets `mapping` first. Negated words ("without EDS spectra") do not count.
 - As the task develops, once each:
@@ -142,9 +152,9 @@ Nothing an agent writes here is reviewed before another run reads it, so it is k
 
 ## Skills are manuals; fixed procedures are workflows
 
-A skill (`asyncroscopy/skills/<name>/SKILL.md`) is an instruction manual: how to do one kind of task on this kind of instrument, which tool or workflow to use, what the replies mean, what to report. The agent graphs retrieve the one or two that match a request and put them in the prompt as background, then retrieve passages of any skill for each step as the task goes on: retrieval-augmented generation over a small library. A skill never runs anything.
+A skill (`agent/skills/<name>/SKILL.md`) is an instruction manual: how to do one kind of task on this kind of instrument, which tool or workflow to use, what the replies mean, what to report. The agent graphs retrieve the one or two that match a request and put them in the prompt as background, then retrieve passages of any skill for each step as the task goes on: retrieval-augmented generation over a small library. A skill never runs anything.
 
-A procedure whose calls are the same every time is a LangGraph workflow (`asyncroscopy/workflows/graphs/`), and its skill says when to run it and where its answer is in the outputs. The measurements that used to be skill run lists are shipped workflows:
+A procedure whose calls are the same every time is a LangGraph workflow (`agent/workflows/`), and its skill says when to run it and where its answer is in the outputs. The measurements that used to be skill run lists are shipped workflows:
 
 | Workflow | What it does | Manual |
 | :-- | :-- | :-- |
@@ -184,7 +194,7 @@ A learned skill file that cannot be read is reported by `list` (exit code 1), no
 ## For a hackathon team
 
 1. Copy `docs/Operation/templates/INSTRUMENT.md` into your repository (for example `configs/instrument_notes/<instrument>.md`) and set `ASYNCROSCOPY_INSTRUMENT_NOTES` to it, so the notes are versioned with your code (or start the stack and run one agent request: it seeds `outputs/agent_memory/INSTRUMENT.md` from your tool list). Fill in your limits, units and samples, in the words your requests will use.
-2. Write a skill for your instrument's main procedure: copy `docs/Operation/templates/SKILL.md` into `asyncroscopy/skills/<name>/` (or a folder in `ASYNCROSCOPY_SKILLS_PATH`), set `keywords`, `requires`, `tools` and `acts`, list the steps, and check it with `python -m asyncroscopy.agents.skills lint <path>`. Agents get it as soon as a request matches.
+2. Write a skill for your instrument's main procedure: copy `docs/Operation/templates/SKILL.md` into `agent/skills/<name>/` (or a folder in `ASYNCROSCOPY_SKILLS_PATH`), set `keywords`, `requires`, `tools` and `acts`, list the steps, and check it with `python -m asyncroscopy.agents.skills lint <path>`. Agents get it as soon as a request matches.
 3. Run your workflow as a goal on the twin (`--goal`); look at the experiment page, the lesson or the learned draft it leaves, and promote drafts you agree with.
 
 ## Testing without a model

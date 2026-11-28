@@ -51,8 +51,7 @@ def _kind(value) -> str:
 
 class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, Device):
 
-    # The MCP server reads each command's risk and role from here.
-    action_hints = action_hints_attribute()
+    action_hints = action_hints_attribute(lambda device: {"reserve": {"approval_if": rules}} if (rules := device.approval_plans()) else {})
 
     # One line saying what this device's job does. MCP tool descriptions start with it.
     JOB_KIND = "background job"
@@ -107,7 +106,6 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
             "forgotten pause does not hold the device for good. 0: no limit.",
     )
 
-    # Subclass hooks
     def resolve_plan(self, plan: dict) -> dict:
         """Validate and expand a plan. Return {"steps": [...], "estimate": {...}, ...}; raise ValueError to refuse.
 
@@ -183,7 +181,6 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
         declares some other way; otherwise the attribute's Tango min_value/max_value apply. Default: none."""
         return []
 
-    # Tango plumbing
     def init_device(self) -> None:
         Device.init_device(self)
         self._generation += 1  # a worker from an earlier generation no longer writes state files
@@ -206,8 +203,7 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
         self.set_state(DevState.ON)
 
     def _no_active_job(self) -> bool:
-        """The trace file waits to be rotated while this device holds a job: the job's events are found by their offset
-        in the file (``trace_offset``). Runs under the file's lock while other threads may hold self._lock, so it takes none."""
+        """Whether the trace may rotate: not while a job's events are found by offset. Takes no lock (runs under the file's)."""
         return not any(job["state"] in ACTIVE_JOB_STATES for job in list(self._jobs.values()))
 
     def delete_device(self) -> None:
@@ -260,9 +256,7 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
 
     @classmethod
     def _plan_caused(cls, exc: Exception, request: str) -> bool:
-        """A KeyError for a plan field the plan lacks, or a TypeError with a null or a wrongly typed value
-        in the plan, is the caller's; anything else from resolve_plan (a typo'd limits key, arithmetic on
-        None) is the device's bug. Plan fields and their types are PLAN_EXAMPLE's when there is one."""
+        """Whether resolve_plan's error is the caller's (a missing or mistyped plan field), not the device's bug."""
         try:
             plan = json.loads(request).get("plan")
         except (ValueError, AttributeError):
@@ -296,7 +290,12 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
                 message += f". Example plan: {json.dumps(example)}"
             return self._error("plan_rejected", message)
 
-    # Envelope verbs
+    def approval_plans(self) -> dict[str, dict[str, Any]]:
+        """The plans the MCP agent endpoint holds for a person's approval when they are submitted (reserve, run_job), as if
+        ``mcp.needs_approval`` listed the submitting tool: {plan field: {"values": [...], "default": the value the field
+        takes when the plan leaves it out}}. None by default."""
+        return {}
+
     @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"plan": {...}, "caller": "name"}. The plan depends on the job; an example is in the tool description.', doc_out="Checks a plan for this device's background job and returns reservation_id with an estimate; nothing moves until start.", risk="low", role="job.reserve")
     def reserve(self, request: str) -> str:
         """Validate a plan, hold the device for it, and return the resolved plan with an estimate."""
@@ -345,7 +344,7 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
                     path.unlink(missing_ok=True)
                 raise
             self._jobs[reservation_id] = job
-        self._trace.record(f"{type(self).__name__}.reserve", True, time.time(), caller=job["caller"], plan_id=job["plan_id"], run_id=reservation_id, arguments=body["plan"], **self._dry(job))
+        self._trace.record(f"{type(self).__name__}.reserve", True, time.time(), caller=job["caller"], plan_id=job["plan_id"], run_id=reservation_id, arguments=body["plan"], **self._trace_fields(job))
         return self._reply(
             {
                 "reservation_id": reservation_id,
@@ -418,7 +417,7 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
             self._save_plan(job)
             self._save(job)
         self._trace.record(f"{type(self).__name__}.revise", True, time.time(), caller=body.get("caller"), plan_id=job["plan_id"], run_id=reservation_id,
-                           arguments={"plan": plan, "replaces_plan_id": previous}, **self._dry(job))
+                           arguments={"plan": plan, "replaces_plan_id": previous}, **self._trace_fields(job))
         return self._reply({
             "reservation_id": reservation_id, "plan_id": job["plan_id"], "replaces_plan_id": previous, "resolved_plan": job["resolved_plan"],
             "estimate": job["estimate"], **({"dry_run": True} if dry_run else {}), **({"limits": limits} if limits["targets"] else {}),
@@ -519,7 +518,7 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
             job["pause_requested"] = True
             self._save(job)
         if first:
-            self._trace.record(f"{type(self).__name__}.pause", True, time.time(), job_id=job.get("job_id"), run_id=job["reservation_id"], caller=body.get("caller"), **self._dry(job))
+            self._trace.record(f"{type(self).__name__}.pause", True, time.time(), job_id=job.get("job_id"), run_id=job["reservation_id"], caller=body.get("caller"), **self._trace_fields(job))
         return self._status(json.dumps({"job_id": job.get("job_id") or job["reservation_id"]}))
 
     @command(dtype_out=str, doc_out='JSON {"jobs": [...]}: every job that holds this device or is running, paused or aborting, with its progress.', risk="low", role="setting.read")

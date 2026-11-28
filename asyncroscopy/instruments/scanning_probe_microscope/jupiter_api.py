@@ -90,9 +90,6 @@ _POLL_INTERVAL_S = 1.0
 # versions, so we accept any of these.
 _IGOR_PROCESS_NAMES = ("Igor.exe", "Igor64.exe", "IgorPro.exe")
 
-#----------------------------------------------------------------------
-#-------------------Auxilary methods--------------------------------
-#----------------------------------------------------------------------
 
 def _require_aespm(origin: str) -> None:
     """Raise a clear error if aespm could not be imported."""
@@ -257,11 +254,6 @@ def _is_same_value(requested, current) -> bool:
     return math.isclose(float(requested), float(current), rel_tol=1e-9, abs_tol=0.0)
 
 
-
-#----------------------------------------------------------------------
-#------------------Jupiter Class--------------------------------
-#----------------------------------------------------------------------
-
 class JupiterMicroscope(SPMMicroscope):
     """Top-level Jupiter AFM device: vendor connection and instrument-global state."""
 
@@ -289,9 +281,6 @@ class SCAN_Jupiter(SPM_SCAN):
         self._scanner_offset: tuple[float, float] | None = None
         super().init_device()
 
-    #----------------------------------------------------------------------
-    #-------------------Scan aquiring methods--------------------------------
-    #----------------------------------------------------------------------
     def _scan_timeout_s(self) -> float:
         """How long to allow for one frame before giving up.
 
@@ -324,7 +313,6 @@ class SCAN_Jupiter(SPM_SCAN):
             "_hw_acquire_scan()",
         )
 
-    # auxilary
     def _write_param(self, name: str, value) -> None:
         """Write one scan parameter and confirm the instrument actually took it.
 
@@ -401,7 +389,6 @@ class SCAN_Jupiter(SPM_SCAN):
         """Abort the running scan immediately."""
         _write(_STOP_SCAN_COMMAND)
 
-    # ------------------------------------------------------------------
     # Probe positioning
     #
     # The probe is positioned by the closed-loop X/Y setpoints, which are
@@ -413,7 +400,6 @@ class SCAN_Jupiter(SPM_SCAN):
     # does not report:
     #
     #     x_scanner = x_scan + scanner_offset_x
-    # ------------------------------------------------------------------
     def _read_probe(self) -> tuple[float, float, float, float, float, float]:
         """One round trip: setpoints (V), sensitivities (m/V), scan centre (m).
 
@@ -566,9 +552,6 @@ class STAGE_Jupiter(SPM_STAGE):
         """Abort any running stage motion immediately."""
         ...
 
-# ----------------------------------------------------------------------
-# Server entry point
-# ----------------------------------------------------------------------
 # run_servers.py starts one process per device with
 # `python -m ...jupiter_api <key>_instance`, and Device.run_server() uses the
 # class name as the Tango server name, so the class is selected here from the

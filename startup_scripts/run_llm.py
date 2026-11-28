@@ -8,7 +8,6 @@ import asyncio
 import importlib.util
 import json
 import os
-import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,15 +18,16 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, python_command, stop_on_termination  # noqa: E402
-from asyncroscopy.core.names import endpoint_urls  # noqa: E402
-from asyncroscopy.core.net import is_loopback_host  # noqa: E402
-from startup_scripts.config_schema import ConfigError, Setting, fill_placeholders, read_settings  # noqa: E402
-from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers  # noqa: E402
+from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, python_command, stop_on_termination
+from asyncroscopy.core.names import endpoint_urls
+from asyncroscopy.mcp.agent_tools import DEFAULT_PROFILE_NAME, PROFILES, profile_data
+from asyncroscopy.core.net import is_loopback_host
+from startup_scripts.config_schema import ConfigError, Setting, fill_placeholders, read_settings
+from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers, wait_for_exit
 
 DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'gemma-llm.yaml'
+default_profile = profile_data(PROFILES / f'{DEFAULT_PROFILE_NAME}.yaml')
 
-# The agent server needs the `agent` and `ollama` extras.
 AGENT_EXTRAS = ('agent', 'ollama')
 AGENT_EXTRA_MODULES = ('langgraph', 'langchain_mcp_adapters', 'langchain_ollama')
 
@@ -48,8 +48,8 @@ SETTINGS = [
     Setting('agent.urls', 'yaml', {}, section='Agent MCP server', label='Endpoint URLs'),
     Setting('agent.allowed_hosts', 'list', [], section='Agent MCP server', label='Allowed hosts',
             help='Names besides the HTTP host and localhost that requests may give as Host or Origin, such as a proxy\'s.'),
-    Setting('agent.model', default='gemma4:31b', section='Model'),
-    Setting('agent.model_provider', default='ollama', section='Model', label='Provider'),
+    Setting('agent.model', default=default_profile['model'], section='Model'),
+    Setting('agent.model_provider', default=default_profile['model_provider'], section='Model', label='Provider'),
     Setting('agent.max_steps', 'int', 10, section='Model', label='Max steps'),
     Setting('agent.use_init_chat_model', 'bool', False, section='Model', label='Use init_chat_model'),
     Setting('agent.startup_agents', 'yaml', [], section='Agents', label='Startup agents'),
@@ -58,6 +58,8 @@ SETTINGS = [
                  'On a simulated stack only, unless the next setting is on.'),
     Setting('agent.workflows_hardware', 'bool', False, section='Workflows', label='Also on the real instrument',
             help='Run workflows on a stack that is not simulated. Needs HTTP host 127.0.0.1.'),
+    Setting('agent.workflow_instruments', 'list', [], section='Workflows', label='Other instruments',
+            help='Instrument endpoint URLs workflows may also run on (instrument_url), such as the instrument a twin is paired with.'),
     Setting('agent.endpoint_role', default='agent', section='Agent MCP server', label='Endpoint role', choices=('agent', 'operator'),
             help='operator: only the workflow review, approve and reject tools, for a person (no swarm, no model). Needs HTTP host 127.0.0.1.'),
 ]
@@ -74,18 +76,18 @@ class AgentConfig:
     http_host: str
     http_port: int
     mcp_urls: list[str] = field(default_factory=list)
-    model: str = "gemma4:31b"
-    model_provider: str = "ollama"
+    model: str = default_profile["model"]
+    model_provider: str = default_profile["model_provider"]
     max_steps: int = 10
     use_init_chat_model: bool = False
-    # Kept as plain dicts so this module never imports the agent extras, which
-    # keeps --help and config errors working without them installed.
+    # Plain dicts, so --help and config errors work without the agent extras installed.
     startup_agents: list[dict] = field(default_factory=list)
     workflows: bool = True
     workflows_hardware: bool = False
     endpoint_role: str = "agent"
     allowed_hosts: list[str] = field(default_factory=list)
     urls: dict[str, str | None] = field(default_factory=endpoint_urls)
+    workflow_instruments: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -146,6 +148,7 @@ def load_config(path: Path) -> Config:
             endpoint_role=str(values['agent.endpoint_role']),
             allowed_hosts=[str(host) for host in values['agent.allowed_hosts'] or []],
             urls=urls,
+            workflow_instruments=[str(url) for url in values['agent.workflow_instruments'] or []],
         ),
     )
 
@@ -186,6 +189,8 @@ def build_command(config: Config) -> list[str]:
         command += ['--allowed-hosts-json', json.dumps(agent.allowed_hosts)]
     if any(agent.urls.values()):
         command += ['--urls-json', json.dumps(agent.urls)]
+    if agent.workflow_instruments:
+        command += ['--workflow-instruments-json', json.dumps(agent.workflow_instruments)]
     if agent.workflows_hardware:
         command.append('--workflows-hardware')
     elif not agent.workflows:
@@ -270,14 +275,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             print("Agent MCP server started. Press Ctrl+C to terminate.")
 
-            # Loop with a timeout so Python catches SIGINT (Ctrl+C) on Windows
-            while managed.running:
-                try:
-                    managed.process.wait(timeout=0.1)
-                except subprocess.TimeoutExpired:
-                    pass
-            # The server stopped on its own. Fail so a supervisor sees it, as run_mcp.py does.
-            code = managed.process.returncode
+            code = wait_for_exit(managed)
             print(f"Agent MCP server exited with code {code}", file=sys.stderr)
             return code or 1
 

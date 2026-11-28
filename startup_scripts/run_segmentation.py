@@ -18,8 +18,8 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager  # noqa: E402
-from startup_scripts.config_schema import fill_placeholders  # noqa: E402
+from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager
+from startup_scripts.config_schema import fill_placeholders
 
 DEVICE_NAME = "asyncroscopy/segment/default"
 INSTANCE_NAME = "segment_instance"

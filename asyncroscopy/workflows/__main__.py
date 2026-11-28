@@ -259,7 +259,7 @@ async def _cmd_run(args, library: Library) -> int:
         inputs[name] = _value(text)
     record = await run_workflow(workflow, inputs, instrument=instrument, analysis=analysis, run_id=config.run_id)
     if simulated:
-        library.record_rehearsal(workflow, record)
+        library.record_rehearsal(workflow, record, info)
     return _show(record)
 
 
@@ -279,7 +279,7 @@ async def _cmd_resume(args, library: Library) -> int:
         return _refused(refusal)
     record = await resume_workflow(args.target, instrument=instrument, analysis=analysis, find=library.workflow)
     if simulated:
-        library.record_rehearsal(workflow, record)
+        library.record_rehearsal(workflow, record, info)
     return _show(record)
 
 

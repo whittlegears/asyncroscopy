@@ -28,7 +28,7 @@ from functools import lru_cache
 import numpy as np
 import psutil
 
-from pyTEMlib.image_tools.image_mosaic import Tile, assemble, bounded_shift, register_tiles
+from pyTEMlib.image_tools.image_mosaic import assemble, bounded_shift, register_tiles
 
 PIXEL = 1e-9
 

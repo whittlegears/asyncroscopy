@@ -163,9 +163,5 @@ class CEOSCorrector(CORRECTOR):
         return length_bytes + b":" + payload[: expected + 1]
 
 
-# Compatibility aliases for older imports.
-CeosCorrector = CEOSCorrector
-
-
 if __name__ == "__main__":
     CEOSCorrector.run_server()

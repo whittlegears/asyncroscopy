@@ -25,7 +25,3 @@ class SimClock:
         if wait and self.time_scale > 0.0 and seconds > 0.0:
             time.sleep(seconds * self.time_scale)
         return self._now
-
-    def real_seconds(self, seconds: float) -> float:
-        """How long ``seconds`` of simulated time take in real time."""
-        return max(0.0, float(seconds)) * self.time_scale

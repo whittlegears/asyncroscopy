@@ -139,10 +139,7 @@ def acquire(device: Any, digital_twin_module: ModuleType, plan: list, fov_m: flo
 
 
 def _affine_residual(estimate: np.ndarray, true: np.ndarray) -> np.ndarray:
-    """|estimate - best affine map of true| per tile: what is left once a shared stretch, shear and turn are removed.
-
-    The map is fitted to the tiles within MISPLACED_PX of it, refitted until that set stops changing, so a few
-    misplaced tiles do not tilt the fit and inflate every other tile's error (they are counted separately)."""
+    """|estimate - best affine map of true| per tile, refitted without the tiles beyond MISPLACED_PX."""
     design = np.hstack([true, np.ones((len(true), 1))])
     keep = np.ones(len(true), bool)
     for _ in range(10):

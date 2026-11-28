@@ -14,9 +14,6 @@ class CombinedMeta(tango.server.DeviceMeta, ABCMeta):
 
 class Instrument(tango.server.Device, metaclass=CombinedMeta):
 
-    # ------------------------------------------------------------------
-    # Instrument level Device properties — configure in Tango DB per deployment
-    # ------------------------------------------------------------------
     data_device_address = tango.server.device_property(
         dtype=str,
         default_value="",
@@ -35,9 +32,6 @@ class Instrument(tango.server.Device, metaclass=CombinedMeta):
             "False, the default, means real hardware (safety checks key off it).",
     )
 
-    # ------------------------------------------------------------------
-    # Instrument Attributes
-    # ------------------------------------------------------------------
 
     # This reads through a lambda. Tango binds the default read method of an attribute to the class declaring it,
     # so the read_instrument_type of a subclass would never run.
@@ -50,7 +44,6 @@ class Instrument(tango.server.Device, metaclass=CombinedMeta):
         doc="Instrument modality, for example 'STEM', 'SPM', 'TEM', or 'OPTIC'.",
     )
 
-    # Tells the MCP server the risk, role, stop and routine of each command, as its @command declares them.
     action_hints = action_hints_attribute()
 
     clock_s = tango.server.attribute(
@@ -62,9 +55,6 @@ class Instrument(tango.server.Device, metaclass=CombinedMeta):
             "Jobs time drift fits and revisits with it, so they hold whatever the twin's time_scale.",
     )
 
-    # ------------------------------------------------------------------
-    # Initialization
-    # ------------------------------------------------------------------
     def init_device(self) -> None:
         tango.server.Device.init_device(self)
         self.instrument_id = self.get_name()  # what every dataset it saves records as instrument_id
@@ -73,9 +63,6 @@ class Instrument(tango.server.Device, metaclass=CombinedMeta):
         self._init_device_attributes()
         self._connect()
 
-    # ------------------------------------------------------------------
-    # Instrument methods
-    # ------------------------------------------------------------------
     @abstractmethod
     def read_instrument_type(self) -> str:
         pass
@@ -89,12 +76,7 @@ class Instrument(tango.server.Device, metaclass=CombinedMeta):
 
     @abstractmethod
     def _init_device_attributes(self) -> None:
-        """
-        Initialize device-specific attributes.
-
-        Define attributes that are specific to a particular instrument type (STEMMicroscope, SPMMicroscope, etc.).
-        """
-        pass
+        """Set the attributes of one instrument type."""
 
     @abstractmethod
     def _connect(self):
@@ -104,10 +86,6 @@ class Instrument(tango.server.Device, metaclass=CombinedMeta):
     def _disconnect(self):
         pass
 
-
-    # ------------------------------------------------------------------
-    # Commands
-    # ------------------------------------------------------------------
 
     @command(risk="high", role="other")
     def Connect(self) -> None:

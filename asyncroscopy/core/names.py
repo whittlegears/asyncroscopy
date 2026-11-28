@@ -6,16 +6,20 @@ Nothing here imports anything outside the standard library.
 
 from __future__ import annotations
 
+import json
 import re
 
-# endpoints and headers
 DEFAULT_MCP_URL = "http://127.0.0.1:8000/mcp"
 DEFAULT_ANALYSIS_URL = "http://127.0.0.1:8003/mcp"
+DEFAULT_TILED_URI = "http://127.0.0.1:9091"
+default_operator_url = "http://127.0.0.1:8001/mcp"
+autoscript_port = 9095
 # Who is calling and which agent run the call belongs to. With mcp.auth the token's subject replaces the caller.
 # Agents send both with every call, and run_job uses them to find a held start again.
 # HTTP header names ignore case, and servers read them lower-cased.
 CALLER_HEADER = "X-Asyncroscopy-Caller"
 RUN_HEADER = "X-Asyncroscopy-Run"
+RUN_KEY_HEADER = "X-Asyncroscopy-Run-Key"
 
 
 endpoint_url_names = ("operator", "agent_server", "workflow_operator", "tiled", "analysis")
@@ -44,7 +48,6 @@ def tool_name(prefix: str, command: str) -> str:
     return f"{prefix}_{command}".replace("/", "_").replace("-", "_")
 
 
-# the job envelope
 # A device that implements every one of these runs jobs.
 ENVELOPE_VERBS = frozenset({"reserve", "start", "job_status", "abort", "results", "release"})
 # Job states. A worker owns a job in RUNNING_JOB_STATES. ACTIVE_JOB_STATES adds a reservation
@@ -53,7 +56,6 @@ RUNNING_JOB_STATES = frozenset({"queued", "running", "aborting", "paused_suspend
 ACTIVE_JOB_STATES = RUNNING_JOB_STATES | {"reserved"}
 FINISHED_JOB_STATES = frozenset({"done", "failed", "aborted"})
 
-# data keys
 # File types the DATA device registers with Tiled. An acquisition's result is a key ending in one.
 REGISTRABLE_SUFFIXES = (".h5", ".hdf5", ".hdf", ".nxs", ".tif", ".tiff")
 _SUFFIXES = "|".join(sorted((re.escape(s[1:]) for s in REGISTRABLE_SUFFIXES), key=len, reverse=True))
@@ -68,7 +70,31 @@ def is_data_key(text: str) -> bool:
     return bool(_DATA_KEY.match(text.strip()))
 
 
-# canonical action roles
+# The fields of a JSON reply that name data: an acquisition's key, a job's result keys.
+KEY_FIELDS = ("key", "image_key", "spectrum_key", "result_key")
+
+
+def reply_keys(reply: object, derived: bool = False) -> list[str]:
+    """The data keys a tool's reply names: the key on the first line of an acquisition's text, and in a JSON reply
+    the ``KEY_FIELDS`` and the ``keys`` list. ``derived`` adds the values of ``result_keys``: what an analysis job
+    made, such as a stitched map."""
+    if isinstance(reply, str):
+        try:
+            reply = json.loads(reply)
+        except ValueError:
+            first = reply.strip().split("\n", 1)[0].strip()
+            return [first] if first and is_data_key(first) else []
+    keys: list[str] = []
+    if isinstance(reply, dict):
+        keys += [str(reply[name]) for name in KEY_FIELDS if isinstance(reply.get(name), str) and reply[name]]
+        keys += [str(k) for k in reply.get("keys") or [] if isinstance(k, str) and k] if isinstance(reply.get("keys"), list) else []
+        found = reply.get("result_keys") if derived else None
+        keys += [str(v) for v in found.values() if isinstance(v, str) and v] if isinstance(found, dict) else []
+    elif isinstance(reply, str) and is_data_key(reply):
+        keys.append(reply)
+    return list(dict.fromkeys(keys))
+
+
 # The Tango attribute where a device describes its commands as JSON. See asyncroscopy.utils.commands.
 ACTION_HINTS = "action_hints"
 

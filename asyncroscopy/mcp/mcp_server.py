@@ -57,11 +57,7 @@ def _without_param_name(desc: str) -> str:
 
 
 def _placeholder_doc(text: str) -> bool:
-    """True for the text PyTango fills in when a command has no doc_in/doc_out.
-
-    Such text must never lead a tool description: models read the first line to
-    pick a tool. Use asyncroscopy.utils.commands.command to carry the docstring.
-    """
+    """True for PyTango's filler for a command without doc_in/doc_out, which must never lead a tool description."""
     # A plain tango.server.command gives a param line that says not documented and then a type line.
     t = re.sub(r"^(?::param|@param)\s+\w+:\s*", "", text.strip())
     t = "\n".join(line for line in t.splitlines() if not line.strip().startswith(":type")).strip().lower()
@@ -148,7 +144,7 @@ class MCPServer:
                 devices declare routine. None: the devices' declarations (an electron microscope's imaging,
                 spectra, stage moves and beam placement; asyncroscopy.utils.commands.command(routine=True)).
             agent_profile: Agent profile YAML whose tool selection endpoint_info.agent_tools reports. None: the
-                packaged default (asyncroscopy/agents/profiles/default.yaml).
+                packaged default (asyncroscopy/agents/profiles/capable.yaml).
             permissions_file: Where people's permission settings are kept, shared with the stack's other endpoints
                 (``asyncroscopy.safety.permissions``). None: ``$ASYNCROSCOPY_PERMISSIONS_FILE``, else
                 outputs/permissions/permissions.json.
@@ -292,11 +288,7 @@ class MCPServer:
         return available
 
     def _find_tools(self) -> dict[str, dict[str, tuple[Callable, CommandInfo]]]:
-        """Discover devices and their commands in the Tango database; registers each device (``add_device``).
-
-        Returns tool prefix (the class name, or <Class>_<member> when several devices share a class)
-        -> command name -> (func, cmd_info).
-        """
+        """Discover devices and commands in the Tango database: {tool prefix: {command: (func, cmd_info)}}."""
         opened = self._open_devices()
         members: dict[str, list[str]] = {}
         families: dict[str, list[str]] = {}
@@ -326,6 +318,7 @@ class MCPServer:
             if device.envelope:
                 device.job_kind = self._attribute(dev, "job_kind")
                 device.plan_example = self._attribute(dev, "plan_example") or None
+            device.commands = {cmd.cmd_name for cmd in commands}
             for cmd in commands:
                 command_name = cmd.cmd_name
                 if not self._offers_command(prefix, dev_class, command_name, hints, getattr(cmd, "disp_level", None)):
@@ -361,12 +354,7 @@ class MCPServer:
 
     @staticmethod
     def _tool_prefix(device_name: str, dev_class: str, members: list[str], families: list[str]) -> str:
-        """The start of a device's tool names, which is its class name.
-
-        When several devices share a class each gets <Class>_<suffix>, so neither hides the other.
-        The suffix is the member ("lab/mapper/2" gives 2). If that is
-        not unique it is the family ("asyncroscopy/grid2/default" gives grid2), and failing that the whole name.
-        """
+        """A device's tool-name prefix: its class, or <Class>_<member, else family, else name> when several share it."""
         if len(members) < 2:
             return dev_class
         parts = device_name.split("/")
@@ -375,13 +363,7 @@ class MCPServer:
         return f"{dev_class}_{suffix}".replace("/", "_").replace("-", "_")
 
     def _offers_command(self, prefix: str, dev_class: str, command_name: str, hints: dict | None, disp_level: Any = None) -> bool:
-        """Whether this endpoint's role and its allow list let it serve the command. The operator endpoint never serves
-        a hard-blocked command (``policy.hard_blocked``); the agent endpoint lists Disconnect and refuses it.
-
-        ``hints``: the device's action_hints, None when they could not be read; then only the operator endpoint
-        serves more than State and Status. ``disp_level``: the command's Tango display level; EXPERT is
-        operator only (``asyncroscopy.utils.commands.command(operator_only=True)`` sets it), whatever the hints say.
-        """
+        """Whether this endpoint serves the command, by its role, the device's hints and the command's display level."""
         if self.endpoint_role != "operator":
             if hints is None:
                 return command_name in TANGO_READS
@@ -410,8 +392,7 @@ class MCPServer:
             return None
 
     def _warn_if_fault(self, device_name: str, dev: DeviceProxy) -> None:
-        """A device in FAULT (an instrument file that does not load) offers only what it could set up, often just the
-        job envelope: say so, rather than serve its few tools as if the instrument were there."""
+        """Say when a device in FAULT offers only part of its tools."""
         try:
             state, status = str(dev.state()), str(dev.status())
         except Exception:
@@ -482,15 +463,7 @@ class MCPServer:
         return descriptor
 
     def _create_wrapper(self, func: Callable, cmd_info: CommandInfo, command_name: str, dev_class: str, tool_prefix: str | None = None) -> Callable:
-        """A tool function, with a proper signature and description, for one Tango command.
-
-        Args:
-            func: The raw Tango device command method.
-            cmd_info: The CommandInfo object from Tango.
-            command_name: The name of the command.
-            dev_class: The Tango device class name.
-            tool_prefix: Tool-name prefix; defaults to the class name.
-        """
+        """A tool function, with a proper signature and description, for one Tango command."""
         prefix = tool_prefix or dev_class
         in_type, in_desc, out_type = cmd_info.in_type, cmd_info.in_type_desc, cmd_info.out_type
         # Fill in missing command docs from the local source so a model is not left with only a name.
@@ -540,8 +513,7 @@ class MCPServer:
     @staticmethod
     def _wrapper_and_params(_run: Callable, in_type: CmdArgType, py_type: Any, param_name: str, arg_type: Any,
                             json_desc: str | None) -> tuple[Callable, list[inspect.Parameter]]:
-        """The function a tool call lands in and its parameters. ``json_desc`` is the description of a string
-        parameter documented as JSON, or None for any other parameter."""
+        """The function a tool call lands in and its parameters; ``json_desc`` describes a JSON string parameter."""
         if in_type == CmdArgType.DevVoid:
             def wrapper():
                 return _run({})
@@ -606,8 +578,7 @@ class MCPServer:
         return "\n".join(lines)
 
     def _warn_about_risks(self) -> None:
-        """Print what an instrument author most likely got wrong in the risk settings: an override that matches no
-        command."""
+        """Warn about a risk override that matches no command."""
         found = []
         devices = [t for t in self.descriptors.values() if not t.native]
         example = next((t.name for t in devices if not t.name.endswith(("_State", "_Status"))), "Class_command")

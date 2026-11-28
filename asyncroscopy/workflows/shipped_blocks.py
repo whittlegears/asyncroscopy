@@ -97,11 +97,7 @@ SCAN_BUSY = ("scantask is already active", "scan task is already active")
 
 
 async def _put_back(ctx: BlockContext, pattern: str, arguments: dict) -> None:
-    """Restore a setting even when the run is stopped or failing.
-
-    A restore that fails is noted in ``ctx.unrestored`` and does not raise, so it never hides the failure that led
-    here.
-    """
+    """Restore a setting even on stop or failure; a failed restore goes to ``ctx.unrestored`` instead of raising."""
     try:
         await ctx.call_always(pattern, arguments)
     except Exception as exc:

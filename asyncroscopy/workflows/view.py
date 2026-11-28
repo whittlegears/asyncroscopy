@@ -105,6 +105,30 @@ def _when(seconds) -> str:
         return ""
 
 
+def _number(value, unit: str) -> str:
+    return f"{float(value):.3g} {unit}" if isinstance(value, (int, float)) else "not known"
+
+
+def _results(results: dict) -> str:
+    """What the last finished rehearsal produced, as the sign-off card shows it: data, time, dose and the twin score."""
+    esc = html.escape
+    keys = results.get("data_keys") or []
+    dose = results.get("dose") or {}
+    score = results.get("twin_score") or {}
+    calls = (f"{results.get('instrument_calls', 0)} instrument call(s), {_number(results.get('wall_s'), 's')} driven, "
+             f"{_number(results.get('instrument_s'), 's')} on the twin's clock")
+    lines = [f"{len(keys)} data key(s)" + (f", map {esc(str(results['map']))}" if results.get("map") else ""), calls,
+             f"dose {_number(dose.get('total_electrons'), 'electrons')}, highest {_number(dose.get('max_dose_e_per_a2'), 'e/A^2')}"]
+    if score.get("known"):
+        stage = score.get("stage_error_m") or {}
+        lines.append(f"{esc(str(score.get('label')))}: {score.get('particles_imaged')} of {score.get('particles_total')} particles imaged, "
+                     f"{score.get('features_on_particles')} of {score.get('features_reported')} reported features on a particle, "
+                     f"stage error {_number(stage.get('median'), 'm')} (median)")
+    elif score:
+        lines.append(f"no twin score: {esc(str(score.get('why') or ''))}")
+    return '<p><b>Last rehearsal</b>: ' + "; ".join(lines) + ".</p>"
+
+
 def _card(library: Library, entry: dict) -> str:
     name, status = str(entry["name"]), str(entry["status"])
     esc = html.escape
@@ -126,6 +150,8 @@ def _card(library: Library, entry: dict) -> str:
         done = [r for r in runs if r.get("state") == "done"]
         facts.append(f'<p><b>Rehearsed on a digital twin</b>: {len(done)} finished run(s) of this exact code'
                      + (f', last {esc(_when(done[-1].get("at")))}' if done else "; it has never run to the end anywhere") + ".</p>")
+        if done and done[-1].get("results"):
+            facts.append(_results(done[-1]["results"]))
         facts.append(f'<p><b>To approve it</b>, after reading the code below, run:</p><pre class="command">python -m asyncroscopy.workflows approve {esc(name)}</pre>')
     elif status == APPROVED:
         record = library.approval(name) or {}

@@ -229,7 +229,6 @@ class InstrumentProfile:
     def __init__(self, ctx: MapContext) -> None:
         self.ctx = ctx
 
-    # helpers
     def instrument(self) -> tango.DeviceProxy:
         """The instrument (``microscope_device_address``), through the context's proxy."""
         return self.ctx.instrument()
@@ -262,7 +261,6 @@ class InstrumentProfile:
         """Commands that only make the instrument safer (blank the beam, retract the tip): a dry run really runs them."""
         return frozenset()
 
-    # plan
     def resolve(self, p: dict) -> None:
         """Check and complete the profile's own plan fields in ``p`` (defaults already merged); raise ValueError to refuse."""
 
@@ -310,7 +308,6 @@ class InstrumentProfile:
         """For a dry run's check: the image shift [x, y] a recorded command sets, or None when it sets none."""
         return None
 
-    # run
     def check_start(self, job: dict) -> None:
         """Before anything is set, at start and on every resume: raise RuntimeError when the plan no longer holds."""
 

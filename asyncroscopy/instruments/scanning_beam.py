@@ -86,6 +86,18 @@ def check_scan(imsize: int, dwell_time: float, scan_region: list[float] | None) 
     return region
 
 
+def check_beam_position(position: list[float]) -> list[float]:
+    """A parked beam position [x, y] as fractions of the current image, refused outside 0 to 1: the one check for
+    place_beam, place_beam_list and a twin's beam_pos write."""
+    x, y = (float(v) for v in list(position)[:2])
+    if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+        raise ValueError(
+            f"place_beam takes [x, y] as fractions of the current image (0 to 1, [0.5, 0.5] is the centre), got [{x:g}, {y:g}]. "
+            "To put the beam on a stage point given in metres (a find_features x_m, y_m), call place_beam_at with it."
+        )
+    return [x, y]
+
+
 def hardware_call(serialized: bool = True):
     """A public command that reaches the instrument: refused when the backend is not connected
     (``_check_connected``), and run under the device's command lock unless ``serialized`` is False."""
@@ -107,12 +119,12 @@ def hardware_call(serialized: bool = True):
 REFUSES = "__asyncroscopy_refuses__"
 
 
-def refuses(command_name: str) -> Callable:
+def refuses(*command_names: str) -> Callable:
     """Mark a backend method whose default only refuses (``unsupported``): a device class that does not override it
-    can never run ``command_name``, and its action_hints say so (``unsupported_commands``)."""
+    can never run ``command_names``, and its action_hints say so (``unsupported_commands``)."""
 
     def mark(method: Callable) -> Callable:
-        setattr(method, REFUSES, command_name)
+        setattr(method, REFUSES, command_names)
         return method
 
     return mark
@@ -120,8 +132,8 @@ def refuses(command_name: str) -> Callable:
 
 def unsupported_commands(device_class: type) -> list[str]:
     """The commands ``device_class`` always refuses: those whose backend method is still a ``refuses`` default."""
-    found = {getattr(getattr(device_class, name, None), REFUSES, None) for name in dir(device_class) if name.startswith("_")}
-    return sorted(name for name in found if name)
+    found = {command for name in dir(device_class) if name.startswith("_") for command in getattr(getattr(device_class, name, None), REFUSES, ())}
+    return sorted(found)
 
 
 def unsupported(device: object, what: str) -> None:
@@ -226,7 +238,10 @@ class ScanningBeamInstrument(Instrument):
         {name: address}. Empty without a database (tests, no-DB mode)."""
         suffix = "_device_address"
         try:
-            db = tango.Util.instance().get_database()
+            db = tango.Util.instance(False).get_database()
+        except tango.DevFailed:
+            return {}
+        try:
             listed = db.get_device_property_list(self.get_name(), f"*{suffix}")
             names = [str(n) for n in getattr(listed, "value_string", listed)]
             values = db.get_device_property(self.get_name(), names) if names else {}
@@ -277,6 +292,8 @@ class ScanningBeamInstrument(Instrument):
             "get_fov": {"returns": {"type": "number", "units": "m"}},
             "place_beam": {"args": [{"name": "position", "type": "array", "items": "number", "elements": ["x", "y"],
                                      "units": "fraction of the field of view", "min": 0.0, "max": 1.0}]},
+            "place_beam_list": {"args": [{"name": "positions", "type": "array", "items": "number", "elements": ["x0", "y0", "x1", "y1", "..."],
+                                          "units": "fraction of the field of view", "min": 0.0, "max": 1.0}]},
             "move_stage": {"args": [{"name": "position", **stage}]},
             "get_stage": {"returns": stage},
             "acquire_scanned_image": {"primary": True, "args": [{"name": "detector_list", "type": "array", "items": "string",
@@ -340,14 +357,22 @@ class ScanningBeamInstrument(Instrument):
         """Park the beam at a point of the current image for a spectrum: [x, y] as fractions of the image from 0 to 1
         (x from the left, y from the top; [0.5, 0.5] is the centre), not metres. Take an image first and do not move
         the stage or change the field of view in between."""
-        x, y = (float(v) for v in list(position)[:2])
-        if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
-            # Agents pass stage coordinates in metres here, so say what the command takes and how to reach a stage point.
-            raise ValueError(
-                f"place_beam takes [x, y] as fractions of the current image (0 to 1, [0.5, 0.5] is the centre), got [{x:g}, {y:g}]. "
-                "To put the beam on a stage point given in metres (a find_features x_m, y_m), call place_beam_at with it."
-            )
-        self._place_beam(position)
+        self._place_beam(check_beam_position(position))
+
+    @command(dtype_in=DevVarFloatArray, dtype_out=None,
+             doc_in=':param positions: Flat list [x0, y0, x1, y1, ...] of beam positions, each pair as place_beam takes it (fractions of the current image).',
+             risk="high", role="beam.place", routine=True)
+    @hardware_call()
+    def place_beam_list(self, positions: list[float]) -> None:
+        """Park the beam at each [x, y] of a flat list in turn, in one call, and leave it at the last. Every position is
+        checked as place_beam checks it before the beam moves, so one bad position refuses the whole list. Nothing is
+        acquired and there is no wait at a position: the beam only passes through them."""
+        values = [float(v) for v in positions]
+        if not values or len(values) % 2 != 0:
+            raise ValueError(f"place_beam_list takes pairs [x0, y0, x1, y1, ...], got {len(values)} numbers; the beam did not move")
+        checked = [check_beam_position(values[i:i + 2]) for i in range(0, len(values), 2)]
+        for position in checked:
+            self._place_beam(position)
 
     @command(risk="low", role="beam.blank", stop=True)
     @hardware_call(serialized=False)  # never waits for a running command because blanking is the safe state
@@ -445,15 +470,13 @@ class ScanningBeamInstrument(Instrument):
         """Move the stage to [x, y, z, alpha, beta], with x/y/z in meters and tilts in degrees."""
         self._move_stage(position)
 
-    # What a backend implements
     @abstractmethod
     def _acquire_scanned_image(self, imsize: int, dwell_time: float, detector_list: list[str], scan_region: list[float], output_format: str = '.h5') -> str:
         """Vendor-specific scanned image acquisition implementation."""
         raise NotImplementedError(f"{type(self).__name__} does not implement _acquire_scanned_image; this vendor backend is missing the override")
 
     def _beam_current(self) -> dict:
-        """The beam current: {"pa", "source" ("measured" or "default"), "age_s" (measured) or "reason" (assumed)}.
-        By default the default_beam_current_pa property, assumed: a backend that measures its current overrides this."""
+        """The beam current with its source; by default the assumed default_beam_current_pa."""
         return {"pa": float(self.default_beam_current_pa), "source": "default", "age_s": None,
                 "reason": f"{type(self).__name__} does not measure its beam current; default_beam_current_pa is assumed"}
 
@@ -462,7 +485,7 @@ class ScanningBeamInstrument(Instrument):
         unsupported(self, "stage_moving")
 
     # A backend without a blanker or a parked beam refuses these. A blank that did nothing must never look like one that worked.
-    @refuses("place_beam")
+    @refuses("place_beam", "place_beam_list")
     def _place_beam(self, position):
         unsupported(self, "place_beam")
 

@@ -91,7 +91,7 @@ def job_graph(device: Any, job: dict, job_id: str, abort: threading.Event, gener
             result=record, result_key=told.get("key"), stage_reported_m=told.get("stage_reported_m"),
             # The instrument's own clock when the step reports it. On a twin this is simulated time.
             **({"clock_s": told["clock_s"]} if "clock_s" in told else {}),
-            **device._dry(job),
+            **device._trace_fields(job),
         )
         return {"index": index + 1, "more": True}
 

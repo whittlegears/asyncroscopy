@@ -43,13 +43,7 @@ def acquisition_filename(
 
 
 def _write_tiff(source, path: Path, attrs: dict | None = None) -> None:
-    """Write one image to ``path`` as TIFF.
-
-    AutoScript adorned images save themselves natively (embedding their own
-    metadata); anything else is a raw array (JEOL/twin) written via tifffile,
-    with ``attrs`` (e.g. JEOL's get_detectorsetting() dict) json-encoded into the
-    TIFF ImageDescription tag so the provenance survives the format.
-    """
+    """Write one image as TIFF: AutoScript images save themselves; others go through tifffile with ``attrs`` in ImageDescription."""
     if hasattr(source, "save"): # adorned images from AutoScript have a save method
         source.save(str(path))
     else:
@@ -102,16 +96,15 @@ def save_acquisition(
             _seal(device, path, instrument_id)
             keys.append(data_server.register_path(str(path)) if data_server is not None else str(path))
         _ledger(device, attrs_list[0] or {}, sample, keys[0], instrument_id)
+        _cache_images(device, acquisition_type, zip(keys, detector_list, data_list))
         return keys[0] if len(keys) == 1 else json.dumps(keys)
 
     has_labeled_datasets = len(detector_list) > 1 or len(data_list) > 1
     detector_label = "_".join([str(detector) for detector in detector_list])
-    # Naming statergy which is acts as a "key" for Tiled 
     path = acquisition_filename(device, acquisition_type, detector_label, data_server)
 
 
     datasets = []
-    # Detector wise, Naming statergy which is acts as a "key" for Tiled 
     for index, source in enumerate(data_list):
         detector = str(detector_list[index]) if index < len(detector_list) else f"item_{index}"
         if dataset_name == "image" and isinstance(detectors, (list, tuple)):
@@ -127,7 +120,15 @@ def save_acquisition(
     _seal(device, path, instrument_id)
     key = data_server.register_path(str(path)) if data_server is not None else str(path)
     _ledger(device, attrs_list[0] or {}, sample, key, instrument_id)
+    _cache_images(device, acquisition_type, [(key, dataset["attrs"]["detector"], dataset["source"]) for dataset in datasets])
     return key
+
+
+def _cache_images(device, acquisition_type: str, saved) -> None:
+    """Offer what was just saved to the device's image cache (get_image_data_cached), when it keeps one."""
+    cache = getattr(device, "image_cache", None)
+    if cache is not None:
+        cache.add(acquisition_type, saved)
 
 
 def save_acquisition_stream(
@@ -200,8 +201,7 @@ def _report(device, message: str) -> None:
 
 
 def _seal(device, path: Path, instrument_id: str) -> None:
-    """Seal the file just written (its SHA-256 in the integrity manifest), so a later change to it is detected. The
-    data is already saved, so a seal that cannot be written is reported on the device's error stream, not raised."""
+    """Seal the file in the integrity manifest; a failure is reported, not raised, as the data is already saved."""
     try:
         seal(path, key=Path(path).name, writer=instrument_id)
     except Exception as exc:
@@ -209,9 +209,7 @@ def _seal(device, path: Path, instrument_id: str) -> None:
 
 
 def _ledger(device, attrs: dict, sample: dict, key: str, instrument_id: str) -> None:
-    """Add the frame to the dose ledger (the detectors saw one frame). The data is already saved, so a ledger that
-    cannot be written is reported on the device's error stream, not raised: a caller that lost the key would take
-    the frame again and double the real dose."""
+    """Add the frame to the dose ledger; a failure is reported, not raised, so a retry never doubles the real dose."""
     try:
         record_frame(attrs, sample.get("sample_load_id"), key, instrument_id)
     except Exception as exc:
@@ -228,7 +226,7 @@ def save_acquisition_hdf5(path: str | Path, datasets: list[dict], file_attrs: di
             h5.attrs[key] = value if isinstance(value, (str, int, float, bool, np.number)) else json.dumps(value)
 
         for item in datasets:
-            # data is list of AdornedImage(Note: vendor is Thermofisher TEM's), which is typically imported as from autoscript_tem_microscope_client.structures import AdornedImage
+            # AutoScript AdornedImage objects.
             source = item.get("source", item.get("data"))
             data = source.data if hasattr(source, "data") and not isinstance(source, np.ndarray) else source
             name = item["name"]

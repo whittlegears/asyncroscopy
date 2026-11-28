@@ -7,17 +7,21 @@ these a workflow can be checked before anything runs. A block's ``run`` reaches 
 
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import importlib
 import json
 import re
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from asyncroscopy.core.names import DATA_KEY_IN_TEXT
+from asyncroscopy.core.fileio import write_atomic
+from asyncroscopy.core.names import DATA_KEY_IN_TEXT, reply_keys
+from asyncroscopy.safety.permissions import json_sha256
 
 from asyncroscopy.agents.mcp_tools import McpServer, held_for_approval, result_text
 
@@ -40,8 +44,7 @@ class Unreachable(BlockFailed):
 
 
 def _undelivered_errors() -> tuple[type[BaseException], ...]:
-    """The transport errors that mean a request was never sent: httpx's, and those of httpx2, the copy the MCP client
-    of fastmcp 4 uses, when it is installed."""
+    """Transport errors meaning a request was never sent, from httpx and fastmcp 4's httpx2."""
     found: list[type[BaseException]] = []
     for name in ("httpx", "httpx2"):
         try:
@@ -158,6 +161,93 @@ LIVE_SCAN_QUESTION = {
 }
 
 
+_journal_scope: ContextVar[dict | None] = ContextVar("journal_scope", default=None)
+
+
+class CallJournal:
+    """The calls a run's waiting node already completed, so that its next execution does not send them again.
+
+    LangGraph runs a node that stopped to wait (a held call, a question) again from its first line. Each call that
+    execution makes is matched, in order, against the calls the node's earlier execution completed: same server, tool
+    and canonical arguments (``safety.permissions.json_sha256``). A match returns the recorded reply without
+    sending anything. The first call that does not match is sent, and so is every call after it: the held call is
+    sent again and uses its approval. A node that finishes drops its entries.
+
+    A call that runs after the node stopped (the node's own cleanup, the runner's ``always`` tools and restores) may
+    undo what the recorded calls did, such as blanking a beam a recorded call unblanked. It drops every entry, so the
+    node runs again from its first line as it would without a journal.
+
+    The journal is a JSON file beside the run record (``path``; None keeps it in memory), so it survives a restart.
+    The runner removes it when the run ends or is stopped.
+    """
+
+    def __init__(self, path: Path | None) -> None:
+        self.path = path
+        found = json.loads(path.read_text(encoding="utf-8") or "{}") if path is not None and path.exists() else {}
+        self.nodes: dict[str, list[dict]] = found if isinstance(found, dict) else {}
+
+    def _save(self) -> None:
+        if self.path is None:
+            return
+        if self.nodes:
+            write_atomic(self.path, json.dumps(self.nodes, default=str))
+        else:
+            self.path.unlink(missing_ok=True)
+
+    @contextlib.contextmanager
+    def node(self, name: str) -> Iterator[None]:
+        """The execution of one node: its calls are matched and recorded under ``name``; they are dropped when it finishes."""
+        token = _journal_scope.set({"node": name, "cursor": 0, "replaying": True, "stopped": False})
+        try:
+            yield
+            if self.nodes.pop(name, None) is not None:
+                self._save()
+        finally:
+            _journal_scope.reset(token)
+
+    def replay(self, server: str, tool: str, arguments: dict) -> dict | None:
+        """The recorded reply of this call, {"text"}, when the node's earlier execution completed it at this point; else None."""
+        scope = _journal_scope.get()
+        if scope is None or not scope["replaying"]:
+            return None
+        entries = self.nodes.get(scope["node"], [])
+        at = scope["cursor"]
+        if at < len(entries) and entries[at]["key"] == [server, tool, json_sha256(arguments)]:
+            scope["cursor"] += 1
+            return {"text": entries[at]["text"]}
+        scope["replaying"] = False
+        if len(entries) > at:
+            self.nodes[scope["node"]] = entries[:at]
+            self._save()
+        return None
+
+    def completed(self, server: str, tool: str, arguments: dict, text: str) -> None:
+        """A call that ran: recorded while its node is running, else (after the node stopped, or outside every node) it drops entries."""
+        scope = _journal_scope.get()
+        if scope is None:
+            if self.nodes:
+                self.clear()
+            return
+        if scope["stopped"]:
+            if self.nodes.pop(scope["node"], None) is not None:
+                self._save()
+            return
+        self.nodes.setdefault(scope["node"], []).append({"key": [server, tool, json_sha256(arguments)], "text": text})
+        scope["cursor"] += 1
+        self._save()
+
+    def stopped(self) -> None:
+        """The running node stops here (it waits, or a call raised): the calls after this are its cleanup."""
+        scope = _journal_scope.get()
+        if scope is not None:
+            scope["stopped"] = True
+            scope["replaying"] = False
+
+    def clear(self) -> None:
+        self.nodes = {}
+        self._save()
+
+
 class BlockContext:
     """What a block is given to work with. It holds the two endpoints, the stop switch and the budget.
 
@@ -170,11 +260,15 @@ class BlockContext:
         self, instrument: McpServer, analysis: McpServer | None = None, *, stop_file: Path | None = None,
         max_tool_calls: int | None = None, deadline: float | None = None,
         on_ask: Callable[[dict], Any] | None = None, on_hold: Callable[[dict], Any] | None = None,
+        journal: CallJournal | None = None,
     ) -> None:
         self.instrument, self.analysis = instrument, analysis
         self.stop_file, self.max_tool_calls, self.deadline, self.on_ask = stop_file, max_tool_calls, deadline, on_ask
         self.on_hold = on_hold
+        self.journal = journal if journal is not None else CallJournal(None)
         self.calls: list[dict] = []
+        # Every data key the run's replies named, in order: acquisitions and what analysis jobs derived from them.
+        self.data_keys: list[str] = []
         # Settings a block could not put back. The run record lists them for the operator.
         self.unrestored: list[dict] = []
         # Settings a run changed and must put back if it ends early: {name: {"set": call, "restore": call}}, each call
@@ -216,13 +310,17 @@ class BlockContext:
     def ask(self, question: dict) -> Any:
         """Ask a person a question and return their answer.
 
-        The run stops here and waits. Once answered, the node starts again from its first line. So a block must ask
-        before it does anything that should not happen twice.
+        The run stops here and waits. Once answered, the node starts again from its first line; the calls it completed
+        before the question get their recorded replies (``CallJournal``) unless something ran in between.
         """
         self.check()
         if self.on_ask is None:
             raise BlockFailed(f"this step asks a person ({str(question.get('question'))[:200]}), and this run has nobody to ask")
-        return self.on_ask(question)
+        try:
+            return self.on_ask(question)
+        except BaseException:
+            self.journal.stopped()
+            raise
 
     async def tool_names(self, server: McpServer | None = None) -> list[str]:
         server = server or self.instrument
@@ -243,10 +341,21 @@ class BlockContext:
         return matches[0]
 
     async def _send(self, server: McpServer, pattern: str, arguments: dict | None, checked: bool) -> Any:
+        try:
+            return await self._send_once(server, pattern, arguments, checked)
+        except BaseException:
+            self.journal.stopped()
+            raise
+
+    async def _send_once(self, server: McpServer, pattern: str, arguments: dict | None, checked: bool) -> Any:
         if checked:
             self.check()
         name = await self.resolve(pattern, server)
+        label = "analysis" if server is self.analysis and server is not self.instrument else "instrument"
         while True:
+            recorded = self.journal.replay(label, name, arguments or {})
+            if recorded is not None:
+                return parse_reply(recorded["text"])
             held = None
             try:
                 result = await server.call(name, arguments or {})
@@ -254,10 +363,12 @@ class BlockContext:
             except Exception as exc:
                 text, error = f"{type(exc).__name__}: {exc}", True
                 if undelivered(exc):
-                    self.calls.append({"tool": name, "args": dict(arguments or {}), "result": text[:200], "error": True})
+                    self.calls.append({"tool": name, "server": label, "args": dict(arguments or {}), "result": text[:200], "error": True})
                     raise Unreachable(f"{name} did not reach the endpoint: {text[:600]}") from exc
-            self.calls.append({"tool": name, "args": dict(arguments or {}), "result": text[:200], "error": error})
+            self.calls.append({"tool": name, "server": label, "args": dict(arguments or {}), "result": text[:200], "error": error})
             if not (error or text.startswith("Error")):
+                self.journal.completed(label, name, arguments or {}, text)
+                self.data_keys += [k for k in reply_keys(text, derived=True) if k not in self.data_keys]
                 return parse_reply(text)
             if held is not None:
                 if not checked or self.on_hold is None:

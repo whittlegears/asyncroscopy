@@ -20,7 +20,7 @@ from tests.catalogs import catalog
 
 # What endpoint_info says the tools are, and the default profile's split of them between the specialists.
 CATALOG = catalog({"DigitalTwin": DigitalTwin, "Mapper": Mapper, "XRDTwin": "xrd.yaml"})
-TEAM = load_profile("default").team
+TEAM = load_profile("small").team
 
 
 def role_of(name, stem=True, analysis_waits=True):

@@ -11,8 +11,10 @@ import pytest
 
 from langgraph.graph import END, START, StateGraph
 
+from asyncroscopy.workflows.blocks import Block, register_block
 from asyncroscopy.workflows import Workflow, WorkflowState, all_workflows, describe_blocks, get_workflow, register_workflow
 from asyncroscopy.workflows.runner import read_run, resume_workflow, run_workflow, stop_workflow
+from asyncroscopy.workflows.server import Endpoints
 from asyncroscopy.workflows.values import evaluate
 
 
@@ -96,7 +98,6 @@ def run(coro):
     return asyncio.run(coro)
 
 
-# The graph and its checks
 def test_the_map_is_a_langgraph_graph_built_from_blocks_and_lints_clean():
     workflow = get_workflow("map_grid")
     assert "map_grid" in all_workflows()
@@ -229,7 +230,6 @@ def test_lint_against_the_endpoints_tools():
     assert problems == ["the instrument endpoint offers no tool matching *_move_stage, which a block of this workflow calls"]
 
 
-
 def test_a_node_switched_off_by_the_runs_inputs_needs_no_tool():
     from asyncroscopy.workflows.checks import switched_off_nodes
 
@@ -266,7 +266,6 @@ def test_blocks_describe_their_ports():
     assert blocks["acquire_tile"]["outputs"]["remaining"] == "integer"
 
 
-# Running
 def test_map_workflow_runs_tile_by_tile_and_stitches(tmp_path):
     instrument, analysis, state = twin()
     record = run(run_workflow("map_grid", INPUTS, instrument=instrument, analysis=analysis, state_dir=tmp_path))
@@ -467,13 +466,17 @@ def test_the_hash_covers_the_helpers_a_block_works_through(monkeypatch):
     assert get_workflow("map_grid").hash() != before
 
 
-# The MCP server an agent uses
-class FakeEndpoints:
-    def __init__(self, instrument, analysis, simulated=True, stack_id="tango://twin:1"):
+class FakeEndpoints(Endpoints):
+    def __init__(self, instrument, analysis, simulated=True, stack_id="tango://twin:1", fingerprint="twin-1", software="v1"):
+        super().__init__("fake://instrument", caller="workflow-test")
         self.instrument, self.analysis, self.simulated, self.stack_id = instrument, analysis, simulated, stack_id
+        self.fingerprint, self.software = fingerprint, software
 
-    async def open(self, run_id=None):
-        return self.instrument, self.analysis, {"simulated": self.simulated, "stack_id": self.stack_id}
+    async def open(self, run_id=None, caller=None, instrument_url=None, run_key=None):
+        self.url(instrument_url)
+        return self.instrument, self.analysis, {"simulated": self.simulated, "stack_id": self.stack_id,
+                                                "stack_fingerprint": {"digest": self.fingerprint, "software": {"commit": self.software},
+                                                                      "simulated": {"value": self.simulated}}}
 
 
 def served(tmp_path, simulated=True, **kwargs):
@@ -581,7 +584,6 @@ def test_a_stack_that_is_not_simulated_runs_only_when_hardware_is_allowed_on_pur
     assert reply["state"] != "refused" and instrument.log
 
 
-# Workflows inside the agent process
 def test_the_agent_server_runs_workflows_itself_so_no_workflow_server_is_needed(tmp_path):
     pytest.importorskip("langchain_core")
     from asyncroscopy.mcp.agent_mcp_server import AgentMCPServer, main
@@ -692,8 +694,7 @@ def test_a_draft_runs_on_the_twin_and_on_an_instrument_only_after_a_person_appro
         library.approve("tiles_only", "")
     record = library.approve("tiles_only", "sam")  # only a person approves and no tool can
     assert record["by"] == "sam" and record["hash"] == library.workflow("tiles_only").hash() and library.find("tiles_only")[1] == "approved"
-    # The approval records the rehearsal run on the twin.
-    assert record["rehearsed"]["run_id"] == rehearsed["run_id"] and record["instrument"] == "any" and record["expires"] is None
+    assert record["rehearsed"] is None and record["instrument"] == "any" and record["expires"] is None
     assert record["request"] == ASKED
     assert "approve" not in " ".join(t.__name__ for t in on_hardware.tools())
     for _ in range(2):  # one approval covers later runs
@@ -727,6 +728,67 @@ def test_a_draft_runs_on_the_twin_and_on_an_instrument_only_after_a_person_appro
     assert "ended on" in library.hardware_problem("tiles_only", "approved", "tango://scope-a:9094", now=clock.time() + 31 * 86400)
     with pytest.raises(ValueError, match="days must be above 0"):
         library.approve("tiles_only", "sam", days=0)
+
+
+def test_a_rehearsal_counts_for_approval_only_on_this_stacks_fingerprint_and_only_when_it_passed(tmp_path):
+    from fastmcp import Client
+
+    from asyncroscopy.workflows import Library
+    from asyncroscopy.workflows.authoring import TEMPLATE
+    from asyncroscopy.workflows.server import WorkflowServer
+
+    library = Library(tmp_path / "library")
+    assert library.propose(TEMPLATE, request=ASKED)["ok"]
+    code = library.workflow("tiles_only").hash()
+
+    async def rehearse(fingerprint, on_acquire=None):
+        instrument, analysis, _ = twin(on_acquire)
+        server = WorkflowServer(FakeEndpoints(instrument, analysis, True, fingerprint=fingerprint), state_dir=tmp_path / fingerprint, library=library)
+        async with Client(server.mcp) as client:
+            return await call(client, "run_workflow", name="tiles_only", inputs={})
+
+    async def approve_on(fingerprint):
+        instrument, analysis, _ = twin()
+        server = WorkflowServer(FakeEndpoints(instrument, analysis, True, fingerprint=fingerprint), state_dir=tmp_path / "operator", library=library)
+        review, approve, _ = server.operator_tools()
+        shown = (await review(name="tiles_only"))["rehearsal"] or {"run_id": "none"}
+        return await approve(name="tiles_only", approver="sam", expected_hash=code, rehearsal_run_id=shown["run_id"])
+
+    assert run(rehearse("twin-a"))["state"] == "done"
+    (kept,) = library.rehearsals("tiles_only", code)
+    assert kept["stack_id"] == "tango://twin:1" and kept["stack_fingerprint"]["digest"] == "twin-a" and kept["cleanup_failed"] == []
+
+    elsewhere = run(approve_on("twin-b"))
+    assert not elsewhere["ok"] and "passed only on another stack" in elsewhere["error"] and "twin-a" in elsewhere["error"] and "twin-b" in elsewhere["error"]
+    with pytest.raises(ValueError, match="no stack_fingerprint"):
+        library.approve("tiles_only", "sam", require_rehearsal=True)
+
+    assert run(rehearse("twin-b", lambda n: "Error: detector timeout" if n == 0 else None))["state"] == "failed"
+    assert "passed only on another stack" in run(approve_on("twin-b"))["error"]
+
+    library.record_rehearsal(library.workflow("tiles_only"), {"hash": code, "run_id": "r-cleanup", "state": "done",
+                                                              "cleanup": [{"tool": "*_blank_beam", "ok": False, "error": "timed out"}]},
+                             {"stack_id": "tango://twin:1", "stack_fingerprint": {"digest": "twin-b"}})
+    assert library.rehearsals("tiles_only", code)[-1]["cleanup_failed"] == ["*_blank_beam"]
+    assert "passed only on another stack" in run(approve_on("twin-b"))["error"]
+
+    assert run(rehearse("twin-b"))["state"] == "done"
+    approved = run(approve_on("twin-b"))
+    assert approved["ok"] and approved["approval"]["rehearsed"]["stack_fingerprint"] == "twin-b"
+
+    async def approve_on_hardware(software):
+        instrument, analysis, _ = twin()
+        endpoints = FakeEndpoints(instrument, analysis, False, stack_id="tango://column:1", fingerprint="column-1", software=software)
+        server = WorkflowServer(endpoints, state_dir=tmp_path / "hardware", library=library)
+        review, approve, _ = server.operator_tools()
+        shown = (await review(name="tiles_only"))["rehearsal"] or {"run_id": "none"}
+        return await approve(name="tiles_only", approver="sam", expected_hash=code, rehearsal_run_id=shown["run_id"])
+
+    library.revoke("tiles_only")
+    other = run(approve_on_hardware("v2"))
+    assert not other["ok"] and "same software" in other["error"] and "v2" in other["error"]
+    on_column = run(approve_on_hardware("v1"))
+    assert on_column["ok"] and on_column["approval"]["rehearsed"]["stack_fingerprint"] in ("twin-a", "twin-b")
 
 
 def test_rehearsals_are_kept_for_the_person_approving_and_an_approvers_list_is_honoured(tmp_path):
@@ -823,7 +885,6 @@ def test_the_command_line_shows_a_person_what_they_approve(tmp_path, capsys):
     assert main(["approve", "nope", *here]) == 1
 
 
-# Parallel steps, any tool as a step and questions for a person
 class SlowServer(FakeServer):
     """A fake endpoint whose calls take a moment. It counts how many ran at once."""
 
@@ -1211,9 +1272,9 @@ def test_a_person_reviews_approves_and_rejects_through_the_operator_endpoint_onl
     assert review["rehearsals"] == [] and not review["rehearsed"] and not review["can_approve"] and "never run to the end" in review["why_not"]
     assert review["approval"] is None and review["changed_since_approval"] is False and review["inputs"] == dict(library.workflow("tiles_only").inputs)
 
-    refused = run(as_the_person("approve_workflow", name="tiles_only", approver="sam", expected_hash=review["hash"]))
+    refused = run(as_the_person("approve_workflow", name="tiles_only", approver="sam", expected_hash=review["hash"], rehearsal_run_id="none"))
     assert not refused["ok"] and "never run to the end on a digital twin" in refused["error"] and library.find("tiles_only")[1] == "draft"
-    assert not run(as_the_person("approve_workflow", name="map_grid", approver="sam", expected_hash="x"))["ok"]  # shipped: nothing to approve
+    assert not run(as_the_person("approve_workflow", name="map_grid", approver="sam", expected_hash="x", rehearsal_run_id="none"))["ok"]  # shipped: nothing to approve
     assert "no workflow named" in run(as_the_person("review_workflow", name="nothing_here"))["error"]
 
     assert run(as_the_agent("run_workflow", name="tiles_only", inputs={"size_m": 5e-7}))["state"] == "done"
@@ -1226,7 +1287,7 @@ def test_a_person_reviews_approves_and_rejects_through_the_operator_endpoint_onl
     # The agent replaces the draft after the person opened it: what they read is not what would be approved.
     swapped = TEMPLATE.replace("max_visits=400", "max_visits=300")
     assert run(as_the_agent("propose_workflow", user_request=ASKED, source=swapped))["ok"]
-    changed = run(as_the_person("approve_workflow", name="tiles_only", approver="Sam Reed", expected_hash=reviewed))
+    changed = run(as_the_person("approve_workflow", name="tiles_only", approver="Sam Reed", expected_hash=reviewed, rehearsal_run_id=rehearsal["run_id"]))
     assert not changed["ok"] and "changed since it was reviewed" in changed["error"] and library.find("tiles_only")[1] == "draft"
     changed = run(as_the_person("reject_workflow", name="tiles_only", reason="too big", expected_hash=reviewed))
     assert not changed["ok"] and "changed since it was reviewed" in changed["error"] and library.rejection("tiles_only") is None
@@ -1234,7 +1295,7 @@ def test_a_person_reviews_approves_and_rejects_through_the_operator_endpoint_onl
     assert run(as_the_person("review_workflow", name="tiles_only"))["hash"] == reviewed
 
     approved = run(as_the_person("approve_workflow", name="tiles_only", approver="Sam Reed", instrument="tango://scope-a:9094", days=30,
-                                 expected_hash=reviewed))
+                                 expected_hash=reviewed, rehearsal_run_id=rehearsal["run_id"]))
     assert approved["ok"] and approved["status"] == "approved"
     record = approved["approval"]
     assert record["by"] == "Sam Reed" and record["via"] == "Workflow_Operator_MCP" and record["instrument"] == "tango://scope-a:9094"
@@ -1259,12 +1320,14 @@ def test_a_person_reviews_approves_and_rejects_through_the_operator_endpoint_onl
     assert review["rejection"]["this_code"] and review["rejection"]["via"] == "Workflow_Operator_MCP" and review["rejection"]["hash"] == reviewed
     assert not run(as_the_person("reject_workflow", name="map_grid", reason="not wanted", expected_hash="x"))["ok"]
     # An approval after a rejection replaces it.
-    assert run(as_the_person("approve_workflow", name="tiles_only", approver="sam", expected_hash=reviewed))["ok"] and library.rejection("tiles_only") is None
+    assert run(as_the_person("approve_workflow", name="tiles_only", approver="sam", expected_hash=reviewed,
+                             rehearsal_run_id=rehearsal["run_id"]))["ok"] and library.rejection("tiles_only") is None
 
     # An approvers list holds here too: the login is the account the operator endpoint runs under.
     library.revoke("tiles_only")
     (tmp_path / "library" / "approvers.json").write_text('["somebody-else"]', encoding="utf-8")
-    assert "approvers.json" in run(as_the_person("approve_workflow", name="tiles_only", approver="sam", expected_hash=reviewed))["error"]
+    assert "approvers.json" in run(as_the_person("approve_workflow", name="tiles_only", approver="sam", expected_hash=reviewed,
+                                                 rehearsal_run_id=rehearsal["run_id"]))["error"]
     assert "approvers.json" in run(as_the_person("reject_workflow", name="tiles_only", reason="no", expected_hash=reviewed))["error"]
 
 
@@ -1287,18 +1350,135 @@ def test_review_and_approve_agree_on_an_expired_approval(tmp_path, monkeypatch):
     tools = {fn.__name__: fn for fn in workflows.tools() + workflows.operator_tools()}
     assert run(tools["propose_workflow"](user_request=ASKED, source=TEMPLATE))["ok"]
     assert run(tools["run_workflow"](name="tiles_only", inputs={"size_m": 5e-7}))["state"] == "done"
-    reviewed = workflows.review("tiles_only")["hash"]
-    first = run(tools["approve_workflow"](name="tiles_only", approver="sam", expected_hash=reviewed, days=1))
+    card = workflows.review("tiles_only", run(workflows.instrument_info()))
+    reviewed, shown = card["hash"], card["rehearsal"]["run_id"]
+    first = run(tools["approve_workflow"](name="tiles_only", approver="sam", expected_hash=reviewed, rehearsal_run_id=shown, days=1))
     assert first["ok"] and first["approval"]["rehearsed"]["inputs"]["size_m"] == 5e-7
 
     review = workflows.review("tiles_only")
-    again = run(tools["approve_workflow"](name="tiles_only", approver="sam", expected_hash=reviewed))
+    again = run(tools["approve_workflow"](name="tiles_only", approver="sam", expected_hash=reviewed, rehearsal_run_id=shown))
     assert not review["approval_expired"] and not review["can_approve"]
     assert not again["ok"] and again["error"] == review["why_not"] and library.approval("tiles_only")["expires"] == first["approval"]["expires"]
 
     later = time.time() + 2 * 86400.0
     monkeypatch.setattr(workflow_server.time, "time", lambda: later)
-    review = workflows.review("tiles_only")
+    review = workflows.review("tiles_only", run(workflows.instrument_info()))
     assert review["approval_expired"] and review["can_approve"] and review["why_not"] is None
-    renewed = run(tools["approve_workflow"](name="tiles_only", approver="sam", expected_hash=reviewed))
+    renewed = run(tools["approve_workflow"](name="tiles_only", approver="sam", expected_hash=reviewed, rehearsal_run_id=shown))
     assert renewed["ok"] and renewed["approval"]["expires"] is None
+
+
+def _ask_between(ctx, args, previous):
+    async def run_it():
+        first = await ctx.call("Twin_get_stage")
+        answer = ctx.ask({"id": "go", "question": "Go on?", "options": ["yes"]})
+        return {"stage": first, "answer": answer, "again": await ctx.call("Twin_get_stage")}
+    return run_it()
+
+
+def _journal_workflow(name: str, always: tuple) -> Workflow:
+    block = register_block(Block(name=f"test_{name}", summary="A read, a question, a read.", run=_ask_between,
+                                 outputs={"stage": "any", "answer": "any", "again": "any"}, tools=("Twin_get_stage",), always=always))
+
+    def build(use):
+        graph = StateGraph(WorkflowState)
+        graph.add_node("ask", use.block(block.name))
+        graph.add_edge(START, "ask")
+        graph.add_edge("ask", END)
+        return graph
+
+    return Workflow(name=name, summary="One node that asks between two reads.", inputs={}, budget={"max_tool_calls": 10}, build=build)
+
+
+@pytest.mark.parametrize(("always", "sent"), [((), 2), (("Twin_blank_beam",), 3)])
+def test_a_resumed_node_replays_its_completed_calls_unless_a_cleanup_ran_in_between(tmp_path, always, sent):
+    instrument, _analysis, _ = twin()
+    workflow = _journal_workflow(f"journal_{len(always)}", always)
+    record = run(run_workflow(workflow, {}, instrument=instrument, state_dir=tmp_path))
+    assert record["state"] == "waiting" and instrument.names().count("Twin_get_stage") == 1
+    question = record["questions"][0]["id"]
+    record = run(resume_workflow(record["run_id"], instrument=instrument, state_dir=tmp_path, find=lambda name: workflow,
+                                 answers={question: "yes"}))
+    assert record["state"] == "done", record
+    assert instrument.names().count("Twin_get_stage") == sent
+    assert not (tmp_path / "runs" / f"{record['run_id']}.journal.json").exists()
+
+
+def test_the_review_shows_the_rehearsals_results_its_calls_and_what_changed_since_the_last_approval(tmp_path):
+    from asyncroscopy.workflows import Library
+    from asyncroscopy.workflows.authoring import TEMPLATE
+    from asyncroscopy.workflows.server import WorkflowServer
+    from asyncroscopy.workflows.view import render_html
+
+    library = Library(tmp_path / "library")
+    instrument, analysis, _ = twin()
+    server = WorkflowServer(FakeEndpoints(instrument, analysis, True), state_dir=tmp_path / "state", library=library)
+    review, _, _ = server.operator_tools()
+    assert library.propose(TEMPLATE, request=ASKED, context="the sample is gold on carbon")["ok"]
+    run_workflow_tool = {fn.__name__: fn for fn in server.tools()}["run_workflow"]
+    record = run(run_workflow_tool("tiles_only", {"size_m": 5e-7}, 30.0))
+    assert record["state"] == "done" and record["results"]["data_keys"] == [f"stem_image_HAADF_{n:04d}.h5" for n in range(1, 5)]
+    card = run(review(name="tiles_only"))
+    assert card["context_as_reported_by_agent"] == {"text": "the sample is gold on carbon", "this_code": True}
+    rehearsal = card["rehearsal"]
+    assert rehearsal["run_id"] == record["run_id"] and rehearsal["stack_fingerprint"]["digest"] == "twin-1"
+    assert rehearsal["results"]["data_keys"] == record["results"]["data_keys"] and rehearsal["results"]["map"] is None
+    score = rehearsal["results"]["twin_score"]
+    assert score["known"] is False and "no operator endpoint" in score["why"] and rehearsal["results"]["dose"] is None
+    moves = [c for c in rehearsal["calls_made"] if c["tool"] == "Twin_move_stage"]
+    assert len(moves) == 5 and all(c["server"] == "instrument" and c["count"] >= 1 for c in moves)
+    assert sum(c["count"] for c in rehearsal["calls_made"]) == record["calls"]
+    assert card["rehearsals"][-1]["results"] == rehearsal["results"]
+    page = render_html(library)
+    assert "<b>Last rehearsal</b>: 4 data key(s)" in page and "no twin score: the stack reports no operator endpoint" in page
+
+    library.approve("tiles_only", "sam")
+    library.revoke("tiles_only")
+    assert library.propose(TEMPLATE.replace("max_visits=400", "max_visits=300"), request=ASKED)["ok"]
+    card = run(review(name="tiles_only"))
+    assert card["last_approved"]["by"] == "sam" and card["last_approved"]["hash"] != card["hash"]
+    assert "-    graph.add_conditional_edges(\"tile\", use.when(\"tile.remaining > 0\", then=\"tile\", otherwise=\"home\", max_visits=400))" in card["diff_from_last_approved"]
+    assert "+    graph.add_conditional_edges(\"tile\", use.when(\"tile.remaining > 0\", then=\"tile\", otherwise=\"home\", max_visits=300))" in card["diff_from_last_approved"]
+    assert card["rehearsal"] is None and card["context_as_reported_by_agent"] is None
+
+
+def test_a_workflow_server_acts_only_on_the_instrument_endpoints_it_was_configured_with():
+    endpoints = Endpoints("http://127.0.0.1:8000/mcp", instruments=["http://127.0.0.1:9000/mcp", "http://127.0.0.1:8000/mcp"])
+    assert endpoints.instruments == ["http://127.0.0.1:8000/mcp", "http://127.0.0.1:9000/mcp"]
+    assert endpoints.url(None) == endpoints.url("") == "http://127.0.0.1:8000/mcp"
+    assert endpoints.url("http://127.0.0.1:9000/mcp") == "http://127.0.0.1:9000/mcp"
+    with pytest.raises(LookupError, match="not an instrument endpoint this workflow server acts on"):
+        endpoints.url("http://evil.example/mcp")
+    assert "reports no operator endpoint" in endpoints.operator({"urls": {}})
+    assert endpoints.operator({"urls": {"operator": "http://127.0.0.1:8001/mcp"}}).url == "http://127.0.0.1:8001/mcp"
+
+
+def test_the_operator_endpoint_is_never_called_with_the_agents_token(monkeypatch):
+    endpoints = Endpoints("http://127.0.0.1:8000/mcp")
+    info = {"urls": {"operator": "http://127.0.0.1:8001/mcp"}}
+    monkeypatch.setenv("ASYNCROSCOPY_MCP_TOKEN", "agents-token")
+    monkeypatch.delenv("ASYNCROSCOPY_OPERATOR_TOKEN", raising=False)
+    refused = endpoints.operator(info)
+    assert isinstance(refused, str) and "ASYNCROSCOPY_OPERATOR_TOKEN is not set" in refused
+    monkeypatch.setenv("ASYNCROSCOPY_OPERATOR_TOKEN", "operator-token")
+    assert endpoints.operator(info).headers["Authorization"] == "Bearer operator-token"
+    monkeypatch.delenv("ASYNCROSCOPY_MCP_TOKEN")
+    monkeypatch.delenv("ASYNCROSCOPY_OPERATOR_TOKEN")
+    assert "Authorization" not in endpoints.operator(info).headers
+
+
+def test_a_twin_marker_is_not_a_run_and_goes_when_the_rehearsal_raises(tmp_path):
+    from asyncroscopy.workflows import runner, signoff
+
+    server, _, _ = served(tmp_path)
+    run(signoff.mark_rehearsal(server.state_dir, "r1", "the stack reports no operator endpoint"))
+    marker = server.state_dir / "runs" / "r1.twin_marker.json"
+    assert marker.exists()
+    assert all(r["run_id"] for r in runner.list_runs(server.state_dir))
+
+    async def raises():
+        raise RuntimeError("the twin went away")
+
+    with pytest.raises(RuntimeError):
+        run(server._rehearsed("r1", {"simulated": True}, get_workflow("map_grid"), raises(), "the stack reports no operator endpoint", False))
+    assert not marker.exists()

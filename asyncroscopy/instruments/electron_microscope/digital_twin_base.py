@@ -21,21 +21,20 @@ import tango
 from tango import AttrWriteType, DevState
 from tango.server import Device, attribute, device_property
 
+from asyncroscopy.data.data_writer import DEFAULT_ACQUISITION_DIR
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope
-from asyncroscopy.instruments.scanning_beam import refuses, unsupported
+from asyncroscopy.instruments.scanning_beam import check_beam_position, hardware_call, refuses, unsupported
 from asyncroscopy.instruments.scanning_beam_twin import TwinBlanker
 from asyncroscopy.utils.commands import command
 from asyncroscopy.instruments.electron_microscope.twin.specimen import SpecimenContext, build_specimen, parse_specimen
 from asyncroscopy.sim.rng import EventRng
 
-DEFAULT_ACQUISITION_DIR = "outputs/tiled_acquisitions"
 DEFAULT_GROUND_TRUTH_DIR = "outputs/twin_ground_truth"
 
 
 class ElectronMicroscopeTwin(TwinBlanker, ElectronMicroscope):
     """A simulated electron microscope: beam (with its blanker), field of view, defocus and stage state over the support devices."""
 
-    # Device properties. Set them in the Tango database for each deployment.
 
     render_mode = "projected"  # a specimen must list this mode in its render_modes
 
@@ -86,21 +85,14 @@ class ElectronMicroscopeTwin(TwinBlanker, ElectronMicroscope):
         doc="Where a twin writes the truth maps of an acquisition (export_ground_truth names the file); never the acquisition directory, which Tiled serves.",
     )
 
-    manufacturer = attribute(
-        label="DigitalTwin",
-        dtype=str,
-        doc="Simulation backend",
-    )
-
     beam_pos = attribute(
         label="Beam Position",
         dtype=(float,),
         max_dim_x=2,
-        access=AttrWriteType.READ,
+        access=AttrWriteType.READ_WRITE,
         unit="fractional",
-        min_value=0.0,
-        max_value=1.0,
-        doc="Beam position as [x, y] fractional coordinates, each in range [0.0, 1.0]. Read only: place_beam moves it.",
+        doc="Beam position as [x, y] fractions of the image, each from 0 to 1. A write parks the beam as place_beam does, "
+            "with the same check: a position outside 0 to 1 is refused with place_beam's error.",
     )
 
     def init_device(self) -> None:
@@ -171,14 +163,16 @@ class ElectronMicroscopeTwin(TwinBlanker, ElectronMicroscope):
         """Build the sample from ``seed`` and set ``_world_bounds_ang``; called on connect."""
         raise NotImplementedError(f"{type(self).__name__} does not implement _generate_sample")
 
-    # Attribute read methods
-    def read_manufacturer(self) -> str:
-        """Read method for the manufacturer attribute."""
+    def _manufacturer_name(self) -> str:
         return self._manufacturer
 
     def read_beam_pos(self) -> list[float]:
         """Read method for the beam position attribute."""
         return [self._beam_pos_x, self._beam_pos_y]
+
+    @hardware_call()
+    def write_beam_pos(self, value: list[float]) -> None:
+        self._place_beam(check_beam_position(value))
 
     @command(dtype_out=str, risk="high", operator_only=True, role="data.read")
     def export_ground_truth(self) -> str:
@@ -192,8 +186,7 @@ class ElectronMicroscopeTwin(TwinBlanker, ElectronMicroscope):
         return {"sample_seed": int(self.sample_seed), "acquisitions": list(self._truth_log)}
 
     def _keep_truth(self, kind: str, truth: dict) -> int:
-        """Record what one acquisition really saw (never saved with its data or returned by a command an agent has)
-        and return its ``acquisition_index``, which the saved data carries so a scorer can match the two."""
+        """Record what one acquisition really saw, for export_ground_truth only, and return its ``acquisition_index``."""
         index = len(self._truth_log)
         self._truth_log.append({"acquisition_index": index, "kind": kind, **truth})
         return index
@@ -230,19 +223,15 @@ class ElectronMicroscopeTwin(TwinBlanker, ElectronMicroscope):
         output_format: str = ".h5",
     ) -> str:
         """A twin without a camera model has no camera image to give. A scan returned as one would be mislabelled."""
-        unsupported(self, "acquire_camera_image (this twin has no camera model; the diffraction and tilt twins have one)")
+        unsupported(self, "acquire_camera_image (this twin has no camera model; DigitalTwin, the diffraction and the tilt twins have one)")
 
     def _detectors(self) -> dict:
-        """What this twin renders: a HAADF scan and an EDS spectrum, and no camera image (a twin with a camera
-        model lists the CAMERA device's names, which all give its one simulated camera)."""
+        """What this twin renders: a HAADF scan and an EDS spectrum, and a camera only with a camera model."""
         return {"scanning": ["haadf"], "camera": [], "eds": ["eds"], "eels": [], "cameras": {}}
 
     def _place_beam(self, position) -> None:
-        """Park the beam at [x, y], fractions of the field (place_beam checks them first)."""
-        x, y = (float(v) for v in list(position)[:2])
-        if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
-            raise ValueError(f"beam position values must be in [0.0, 1.0], got x={x}, y={y}")
-        self._beam_pos_x, self._beam_pos_y = x, y
+        """Park the beam at [x, y], fractions of the field (place_beam, place_beam_list and a beam_pos write check them first)."""
+        self._beam_pos_x, self._beam_pos_y = (float(v) for v in list(position)[:2])
 
     def _set_fov(self, fov) -> None:
         """Set the field of view in meters."""
@@ -280,22 +269,7 @@ class ElectronMicroscopeTwin(TwinBlanker, ElectronMicroscope):
         self._stage_position = target
 
     def _get_parameters(self) -> str:
-        """Return all simulated status parameters as a JSON string.
-
-        The base class exposes this through the get_parameters Tango command,
-        which is typed DevString — returning a dict (or the inherited abstract
-        stub's None) makes the command fail with a Tango translation error.
-
-        The detector keys are deliberately split by what they mean: device_proxies
-        are the twin's connected settings devices (scan, stage, data, ... — not
-        detectors), scan_detectors is what the twin's STEM renderer actually
-        produces (a simulated HAADF signal, whatever label is requested),
-        spectrum_detectors is what acquire_spectrum accepts, and camera_detectors
-        the camera names it gives an image for (none without a camera model);
-        all three come from _detectors, which get_detectors serves. An earlier
-        draft published the proxy keys under a "detectors" key, which told an
-        agent that "stage" and "data" were detectors it could scan with.
-        """
+        """All simulated status parameters as JSON (DevString); the detectors listed are those the twin renders."""
         self._sync_stage_from_proxy()
         parameters = {
             "manufacturer": self._manufacturer,
@@ -305,7 +279,7 @@ class ElectronMicroscopeTwin(TwinBlanker, ElectronMicroscope):
             "scan_detectors": self._detectors()["scanning"],
             "spectrum_detectors": self._detectors()["eds"],
             "camera_detectors": self._detectors()["camera"],
-            "beam_blanked": self._blanked,
+            "beam_blanked": self._beam_blanked(),
             **self._viewport_metadata(),
         }
         return json.dumps(parameters)

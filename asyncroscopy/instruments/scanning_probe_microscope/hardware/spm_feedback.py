@@ -17,12 +17,8 @@ from asyncroscopy.utils.commands import action_hints_attribute, command
 class SPM_FEEDBACK(tango.server.Device, metaclass=CombinedMeta):
     """Abstract SPM feedback device: Z loop setpoint, gains, engage state."""
 
-    # The risk, role and stop of each command, as its @command declares them. The MCP server reads this.
     action_hints = action_hints_attribute()
 
-    # ------------------------------------------------------------------
-    # Attributes
-    # ------------------------------------------------------------------
 
     setpoint = tango.server.attribute(
         label="Setpoint",
@@ -46,18 +42,12 @@ class SPM_FEEDBACK(tango.server.Device, metaclass=CombinedMeta):
         doc="True when the Z feedback loop is engaged. Read live from hardware.",
     )
 
-    # ------------------------------------------------------------------
-    # Initialization
-    # ------------------------------------------------------------------
     def init_device(self) -> None:
         tango.server.Device.init_device(self)
         self._refresh_params()
         self.set_state(tango.DevState.ON)
         self.info_stream("SPM FEEDBACK device initialised")
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
 
     def _refresh_params(self) -> None:
         """Re-read all feedback parameters from hardware into local fields."""
@@ -70,9 +60,6 @@ class SPM_FEEDBACK(tango.server.Device, metaclass=CombinedMeta):
         self._hw_write_feedback_param(name, value)
         self._refresh_params()
 
-    # ------------------------------------------------------------------
-    # Attribute read / write — writes pushed to hardware
-    # ------------------------------------------------------------------
 
     def read_setpoint(self) -> float:
         return self._setpoint
@@ -89,9 +76,6 @@ class SPM_FEEDBACK(tango.server.Device, metaclass=CombinedMeta):
     def read_feedback_on_bool(self) -> bool:
         return self._hw_is_feedback_on()
     
-    # ------------------------------------------------------------------
-    # Commands
-    # ------------------------------------------------------------------
 
     @command(risk="high", role="other")
     def feedback_on(self) -> None:
@@ -108,9 +92,6 @@ class SPM_FEEDBACK(tango.server.Device, metaclass=CombinedMeta):
         """Re-read all feedback parameters from hardware, e.g. after changes in the vendor GUI."""
         self._refresh_params()
 
-    # ------------------------------------------------------------------
-    # Abstract methods — vendor-specific
-    # ------------------------------------------------------------------
 
     @abstractmethod
     def _hw_read_feedback_params(self) -> dict:
@@ -137,8 +118,5 @@ class SPM_FEEDBACK(tango.server.Device, metaclass=CombinedMeta):
         """Return True if the Z feedback loop is currently engaged."""
         pass
 
-# ----------------------------------------------------------------------
-# Server entry point
-# ----------------------------------------------------------------------
 if __name__ == "__main__":
     SPM_FEEDBACK.run_server()

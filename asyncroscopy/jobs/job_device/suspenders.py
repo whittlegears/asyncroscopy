@@ -87,7 +87,7 @@ class SuspenderChecks:
             self.on_suspend(job, reason)
         except Exception as exc:
             unsafe = f"{type(exc).__name__}: {exc}"
-            self._trace.record(f"{cls}.on_suspend", False, time.time(), job_id=job_id, run_id=job["reservation_id"], error=unsafe, **self._dry(job))
+            self._trace.record(f"{cls}.on_suspend", False, time.time(), job_id=job_id, run_id=job["reservation_id"], error=unsafe, **self._trace_fields(job))
         with self._lock:
             if job["state"] != "running":  # aborting already
                 return False
@@ -96,7 +96,7 @@ class SuspenderChecks:
                 job["last_error"] = f"suspended, but the instrument was not made safe: {unsafe}"
             job["suspended"] = {"reason": reason, "since": time.time()}
             self._save(job)
-        self._trace.record(f"{cls}.suspended", False, time.time(), job_id=job_id, run_id=job["reservation_id"], error=reason, **self._dry(job))
+        self._trace.record(f"{cls}.suspended", False, time.time(), job_id=job_id, run_id=job["reservation_id"], error=reason, **self._trace_fields(job))
         good_since = None
         while not abort.wait(max(0.05, float(self.suspender_poll_s))):
             problems = self._suspender_problems()
@@ -117,7 +117,7 @@ class SuspenderChecks:
                     job["state"] = "running"
                     job["suspended"] = None
                     self._save(job)
-                self._trace.record(f"{cls}.resumed", True, time.time(), job_id=job_id, run_id=job["reservation_id"], **self._dry(job))
+                self._trace.record(f"{cls}.resumed", True, time.time(), job_id=job_id, run_id=job["reservation_id"], **self._trace_fields(job))
                 return True
             with self._lock:
                 job["suspended"] = {**job["suspended"], "reason": "conditions are good again", "resumes_in_s": round(wait_s - waited, 1)}

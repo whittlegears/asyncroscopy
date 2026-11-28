@@ -21,18 +21,25 @@ proposal.
 | :-- | :-- | :-- |
 | `export_ground_truth` | no (operator only) | keep: it is a scoring hook |
 | DigitalTwinSTAGE `move_on_clock`, `frame_trajectory`, `stage_moves` | no (operator only) | keep; optionally block on the operator endpoint too |
-| `beam_pos` attribute, read-write and declared twice | writable over Tango, bypassing `place_beam`'s checks | make it read-only; drop the duplicate in DigitalTwinParticles |
+| `beam_pos` attribute, read-write and declared twice | writable over Tango, bypassing `place_beam`'s checks | done (2026-11-28): declared once on `ElectronMicroscopeTwin`, writable, and a write goes through `check_beam_position`, the check `place_beam` uses |
 | PolycrystallineGold `get_volume_metadata`, `get_region_parameters` | **yes** | remove: no callers, and they leak ground truth |
 | CORRECTOR `get_aberrations_coeff_sim` / `set_aberrations_coeff_sim` (on the shared base) | **yes**, on both endpoints | move to DigitalTwinCorrector and make operator only |
 | `sample_seed`, `particle_count`, DigitalTwinTilt specimen truth in `get_parameters` | yes | strip them (only DigitalTwin already pops the seed) |
 | DigitalTwinCorrector `get_info` reporting `"manufacturer": "CEOS"` | yes | fix the label |
 
 ## Dead or duplicate commands on both twin and hardware
-- `get_image_data_cached`: `_cached_images` is never assigned, so it always raises.
-- `place_beam_list`: no callers.
-- `register_stage`: duplicates `get_stage`.
-- AutoScript attributes `fov`, `defocus` and `beam_state` duplicate commands. `manufacturer` is dtype bool and
-  raises when read.
+Found on 2026-11-27 and removed; on 2026-11-28 the first, second and fourth were restored with real implementations.
+- `get_image_data_cached`: `_cached_images` was never assigned, so it always raised. Now the DATA writer offers every
+  saved 2-D image to the device's `ImageCache` (`image_cache_size` property, 8 by default) and the command returns one
+  by index, 0 the newest.
+- `place_beam_list`: had no callers. Now it checks every position with `place_beam`'s check before the beam moves,
+  then parks the beam at each in turn and leaves it at the last.
+- `register_stage`: duplicates `get_stage`. Kept removed: it once copied the stage position onto a settings-only STAGE
+  device (e68a49e); the AutoScript STAGE device now reads the hardware itself.
+- AutoScript attributes `fov`, `defocus` and `beam_state` duplicated commands, and `manufacturer` was dtype bool and
+  raised when read. Now `fov`, `defocus`, `beam_state` and `manufacturer` (a string) are read-only attributes on the
+  `ElectronMicroscope` base, for Tango polling and monitors, each read through its command's reader
+  (`_get_fov`, `_get_defocus`, `_beam_blanked`), on the twins and AutoScript alike.
 
 ## Behaviour that differs between twin and hardware
 1. **Stop commands that do nothing (safety-critical).** The base `_blank_beam`, `_unblank_beam`, `_place_beam` and
@@ -48,6 +55,10 @@ proposal.
    value succeed silently; the twin raises.
 5. **Camera images.** On DigitalTwin, DigitalTwinParticles and PolycrystallineGold, `acquire_camera_image` returns
    a HAADF scan, using the exposure as dwell. The base also misbinds `output_format` into `electron_counting`.
+   Status 2026-11-28: the misbinding is gone (`output_format` reaches the saved file). DigitalTwin renders a
+   bright-field mass-thickness camera image (docs/digital_twin.md); DigitalTwinParticles and PolycrystallineGold
+   refuse it (UnsupportedCommand), since their pseudo-potentials have no physical scale for a TEM image.
+   `acquire_scanned_data_advanced` stays unsupported on DigitalTwin: it has no diffraction model.
 6. **`auto_focus`.** On AutoScript in TEM mode it only stigmates; in STEM mode it discards `RunOptiStemResults.quality`.
 7. **Detector names.** The twin has HAADF, ADF and BF; AutoScript has BF, DF2, DF4, HAADF, BF-S and DF-S. "ADF"
    works only on the twin.

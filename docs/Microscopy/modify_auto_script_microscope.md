@@ -22,9 +22,13 @@ If you're editing this class, you're usually doing one of these:
    must return `nan` when it is `None` (testing mode) — guard every such read.
    An action never passes silently without a client: reach it through `self._client("<command>")`,
    which raises NotConnected (so `blank_beam`, and with it `stop_all`, report the beam not blanked in testing mode).
-   Field of view, defocus, the blanker and the stage are read with commands
-   (`get_fov`, `get_defocus`, `get_parameters`' `beam_blanked`, `get_stage`),
-   not duplicated as attributes.
+   Field of view, defocus and the blanker are also read-only attributes (`fov`, `defocus`, `beam_state`), declared on
+   the `ElectronMicroscope` base for Tango polling, events and monitors such as Taurus or Jive. Each reads through the
+   reader its command uses (`_get_fov`, `_get_defocus`, `_beam_blanked`, which `get_parameters`' `beam_blanked` reads
+   too), so there is no second implementation, and a read without a client raises NotConnected. `manufacturer` is a
+   string, "Thermo Fisher Scientific": AutoScript TEM drives only that maker's microscopes, and the 1.18 client has
+   no manufacturer member outside an image's metadata. The stage is read with `get_stage`; there is no
+   `register_stage` (the AutoScript STAGE device reads the hardware itself).
    The public stage vector is `[x, y, z, alpha, beta]`, with x/y/z in meters
    and alpha/beta in degrees. Convert tilts to radians only when sending values
    to AutoScript.

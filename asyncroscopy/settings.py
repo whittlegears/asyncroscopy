@@ -29,6 +29,13 @@ def _flag(text: str | None, default: bool) -> bool:
     return text.strip().lower() not in ("", "0", "false", "no", "off")
 
 
+def shipped_agent_dir() -> Path:
+    """The ``agent`` folder of skills and workflows: inside the installed package when built into a wheel, else the checkout's."""
+    package = Path(__file__).resolve().parent
+    built = package / "agent"
+    return built if built.is_dir() else package.parent / "agent"
+
+
 def _number(env: Mapping[str, str], name: str, default, kind):
     """``env[name]`` as ``kind``; a missing or blank value is ``default``. A value that is not a number names the variable."""
     text = env.get(name, "")
@@ -42,7 +49,6 @@ def _number(env: Mapping[str, str], name: str, default, kind):
 
 @dataclass(frozen=True)
 class Settings:
-    # Where servers write
     outputs_root: Path
     log_dir: Path
     trace_dir: Path
@@ -58,17 +64,16 @@ class Settings:
     dose_ledger: Path
     permissions_file: Path
 
-    # Addresses and credentials
     mcp_url: str | None
     operator_url: str | None
     analysis_url: str | None
     mcp_token: str | None = field(repr=False)
+    operator_token: str | None = field(repr=False)
     tiled_uri: str | None
     tiled_public_uri: str
     tiled_api_key: str | None = field(repr=False)
     plain_tiled_api_key: str | None = field(repr=False)  # TILED_API_KEY, the name Tiled's own tools use
 
-    # Agents
     model: str | None
     model_provider: str | None
     num_ctx: int | None
@@ -84,14 +89,13 @@ class Settings:
     auto_promote_after: int
     learn_skills: bool  # a goal run that met its goal drafts a learned skill
 
-    # Extensions
     plugins: str
+    agent_dir: Path
     skills_path: tuple[Path, ...]
     lab_skills: Path  # the lab's own skills, written from a client (asyncroscopy.skills.lab)
     skills: bool  # agent skills on or off
     skills_off: tuple[str, ...]  # skill names or globs to hide
 
-    # GUIs and test switches
     qt_api: str
     write_golden: bool
     write_benchmarks: bool
@@ -120,6 +124,7 @@ class Settings:
             operator_url=env.get("ASYNCROSCOPY_OPERATOR_URL") or None,
             analysis_url=env.get("ASYNCROSCOPY_ANALYSIS_URL") or None,
             mcp_token=env.get("ASYNCROSCOPY_MCP_TOKEN") or None,
+            operator_token=env.get("ASYNCROSCOPY_OPERATOR_TOKEN") or None,
             tiled_uri=env.get("ASYNCROSCOPY_TILED_URI") or None,
             tiled_public_uri=env.get("ASYNCROSCOPY_TILED_PUBLIC_URI", "").strip().rstrip("/"),
             tiled_api_key=env.get("ASYNCROSCOPY_TILED_API_KEY"),  # "" is a key an operator set on purpose
@@ -139,6 +144,7 @@ class Settings:
             auto_promote_after=_number(env, "ASYNCROSCOPY_AUTO_PROMOTE_AFTER", 0, int),
             learn_skills=_flag(env.get("ASYNCROSCOPY_LEARN_SKILLS"), False),
             plugins=env.get("ASYNCROSCOPY_PLUGINS", ""),
+            agent_dir=Path(env.get("ASYNCROSCOPY_AGENT_DIR") or shipped_agent_dir()),
             skills_path=tuple(Path(p) for p in env.get("ASYNCROSCOPY_SKILLS_PATH", "").split(os.pathsep) if p),
             lab_skills=Path(env.get("ASYNCROSCOPY_LAB_SKILLS") or outputs / "lab_skills"),
             skills=_flag(env.get("ASYNCROSCOPY_SKILLS"), False),

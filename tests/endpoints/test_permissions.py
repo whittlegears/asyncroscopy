@@ -5,46 +5,28 @@ from __future__ import annotations
 
 import asyncio
 import json
-import socket
-import threading
-import time
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
-import tango
-import uvicorn
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
 from langgraph.graph import END, START, StateGraph
 
 from asyncroscopy.agents.mcp_tools import McpServer
 from asyncroscopy.core.names import CALLER_HEADER, RUN_HEADER
-from asyncroscopy.mcp.mcp_server import MCPServer
+from asyncroscopy.mcp.components.permissions import always_runs
+from asyncroscopy.mcp.descriptors import DeviceInfo, describe_command, describe_native
 from asyncroscopy.safety.permissions import PermissionStore, iso_utc, seconds_of
+from asyncroscopy.trace.writer import read_tool_log
+from asyncroscopy.workflows.blocks import Block, register_block
 from asyncroscopy.workflows.graph import Workflow, WorkflowState
 from asyncroscopy.workflows.runner import resume_workflow, run_workflow
 
 DOSE = "SAMPLE_get_dose"
 SAMPLE = "asyncroscopy/sample/mapping"
 TWIN = "asyncroscopy/digitaltwin/default"
-
-
-@pytest.fixture
-def stack(monkeypatch, tango_ctx, tmp_path):
-    """make(role, *devices, needs_approval=...) -> an MCPServer on the session devices, sharing one permissions file."""
-    monkeypatch.setattr("asyncroscopy.mcp.mcp_server.DeviceProxy", lambda name: tango.DeviceProxy(tango_ctx.get_device_access(name)))
-    permissions_file = tmp_path / "permissions.json"
-
-    def make(role, *names, needs_approval=None, urls=None):
-        database = type("Db", (), {"get_device_exported": lambda self, p: type("E", (), {"value_string": list(names)})()})()
-        server = MCPServer("perm-test", "localhost", 1, blocked_classes=[], needs_approval=needs_approval or {},
-                           data_device_address="asyncroscopy/data/default", verbose=False, endpoint_role=role, database=database,
-                           permissions_file=str(permissions_file), urls=urls)
-        server.setup(print_summary=False)
-        return server
-
-    make.permissions_file = permissions_file
-    return make
 
 
 async def call(server, name, arguments=None):
@@ -70,7 +52,7 @@ def test_a_held_call_returns_approval_required_and_resending_it_gives_the_same_r
     first = run(call(agent, DOSE, {"request": "{}"}))
     assert first.is_error
     held = first.structured_content
-    assert held["status"] == "approval_required" and held["tool"] == DOSE and held["arguments"] == {"request": "{}"}
+    assert held["status"] == "approval_required" and held["tool"] == DOSE and held["arguments"] == {"request": "{}", "x_m": None, "y_m": None}
     assert held["acts"] is False and held["risk"] == "low" and len(held["arguments_sha256"]) == 64
     assert held["expires_at"].endswith("Z") and "waiting for a person" in first.content[0].text
     again = run(call(agent, DOSE, {"request": "{}"}))
@@ -125,13 +107,91 @@ def test_held_calls_and_approvals_expire(tmp_path):
         store.approve(renewed["request_id"])
 
 
+def test_an_approval_is_used_only_by_the_caller_who_asked(tmp_path):
+    store = PermissionStore(tmp_path / "permissions.json", "tango://h:1")
+    alice = store.request("T", {"a": 1}, True, "high", "alice")
+    store.approve(alice["request_id"])
+    bob = store.request("T", {"a": 1}, True, "high", "bob")
+    assert bob["status"] == "pending" and bob["request_id"] != alice["request_id"]
+    assert store.request("T", {"a": 1}, True, "high", "alice")["status"] == "approved"
+    assert store.request("T", {"a": 1}, True, "high", "bob")["request_id"] == bob["request_id"]
+
+
+def test_a_held_call_is_matched_on_its_validated_arguments(stack):
+    agent = stack("agent", TWIN, needs_approval={"DigitalTwin": ["set_defocus"]})
+    agent.permissions.store.set_tool("list_data", "approve")
+    held = run(call(agent, "DigitalTwin_set_defocus", {"defocus": 1})).structured_content
+    assert held["status"] == "approval_required" and held["arguments"] == {"defocus": 1.0}
+    assert run(call(agent, "DigitalTwin_set_defocus", {"defocus": 1.0})).structured_content["request_id"] == held["request_id"]
+    listed = agent.permissions.decide("list_data", {})[0].structured_content
+    assert listed["arguments"] == {"kind": None, "search": None, "limit": 20, "offset": 0}
+    assert agent.permissions.decide("list_data", {"limit": 20})[0].structured_content["request_id"] == listed["request_id"]
+    refused = run(call(agent, "DigitalTwin_set_defocus", {"defocus": "near"}))
+    assert refused.is_error and refused.structured_content == {"status": "invalid_arguments", "tool": "DigitalTwin_set_defocus"}
+    assert {p["request_id"] for p in agent.permissions.store.pending()} == {held["request_id"], listed["request_id"]}
+
+
+def test_only_a_declared_stop_is_never_held():
+    device = DeviceInfo("Gun", "Gun", hints={"blank_beam": {"role": "beam.blank"}, "halt": {"stop": True}})
+
+    def described(command):
+        return describe_command(device, command, overrides={}, routine=None, warnings=[])
+
+    assert described("gun_off").action_role in ("beam.blank", "safe_stop")
+    assert [always_runs(described(c)) for c in ("gun_off", "hv_off", "emission_off")] == [False, False, False]
+    assert always_runs(described("blank_beam")) and always_runs(described("halt"))
+    assert always_runs(describe_native("stop_all")) and not always_runs(describe_native("run_job"))
+
+
+TUNER = "asyncroscopy/tuner/default"
+
+
+def test_a_native_tool_can_need_approval_and_an_entry_naming_nothing_is_refused(stack):
+    agent = stack("agent", SAMPLE, TUNER, needs_approval={"*": ["run_job"], "SAMPLE": ["load_sample"]})
+    assert agent.discovery.endpoint_info()["tools"]["run_job"]["permission"] == "approve"
+    plan = {"corrections": ["focus"], "strategy": "image_metric"}
+    assert agent.permissions.decide("run_job", {"device": "Tuner", "plan": plan})[0].structured_content["status"] == "approval_required"
+    for wrong in ({"SAMPLE": ["get_doze"]}, {"*": ["no_such_tool"]}):
+        with pytest.raises(ValueError, match="names no command of its class"):
+            stack("agent", SAMPLE, needs_approval=wrong)
+    stack("agent", SAMPLE, needs_approval={"CEOSCorrector": ["correct"]})
+
+
+def test_a_job_that_would_write_the_corrector_waits_for_a_person(stack):
+    agent = stack("agent", TUNER)
+    operator = stack("operator", TUNER)
+    plan = {"corrections": ["focus"], "strategy": "corrector", "dose_budget_e_per_a2": 3000.0}
+    held = run(call(agent, "run_job", {"device": "Tuner", "plan": plan}))
+    assert held.is_error and held.structured_content["status"] == "approval_required"
+    assert held.structured_content["arguments"]["plan"] == plan
+    reserve = run(call(agent, "Tuner_reserve", {"request": json.dumps({"plan": plan})}))
+    assert reserve.structured_content["status"] == "approval_required"
+    focus_only = {**plan, "strategy": "image_metric"}
+    assert agent.permissions.decide("run_job", {"device": "Tuner", "plan": focus_only})[0] is None
+    assert agent.permissions.decide("run_job", {"device": "Tuner", "plan": {"corrections": ["focus"]}})[0] is None
+    run(operator_call(operator, "approve_call", {"request_id": held.structured_content["request_id"]}))
+    assert agent.permissions.decide("run_job", {"device": "Tuner", "plan": plan})[0] is None
+    assert agent.permissions.decide("run_job", {"device": "Tuner", "plan": plan})[0].structured_content["status"] == "approval_required"
+
+
+def test_the_monitor_endpoint_holds_reads_as_the_agent_endpoint_does(stack):
+    agent, operator = held_pair(stack)
+    monitor = stack("monitor", SAMPLE)
+    assert not run(call(monitor, "SAMPLE_get_sample")).is_error
+    run(operator_call(operator, "set_group_permission", {"group": "reads", "permission": "approve"}))
+    held = run(call(monitor, "SAMPLE_get_sample")).structured_content
+    assert held["status"] == "approval_required"
+    assert [p["request_id"] for p in run(operator_call(operator, "list_pending_approvals"))["result"]] == [held["request_id"]]
+    assert not run(call(monitor, "endpoint_info")).is_error
+
+
 def test_never_cannot_be_set_and_disconnect_is_never_run(stack):
     agent = stack("agent", TWIN)
     operator = stack("operator", TWIN)
     assert "DigitalTwin_Disconnect" not in operator.registered
     info = agent.discovery.endpoint_info()
     assert info["tools"]["DigitalTwin_Disconnect"]["permission"] == "never"
-    refused = agent.permissions.check("DigitalTwin_Disconnect", {})
+    refused = agent.permissions.decide("DigitalTwin_Disconnect", {})[0]
     assert refused.is_error and refused.structured_content == {"status": "never", "tool": "DigitalTwin_Disconnect"}
     with pytest.raises(ToolError, match="allow, approve or default"):
         run(operator_call(operator, "set_permission", {"tool": "DigitalTwin_get_stage", "permission": "never"}))
@@ -213,32 +273,6 @@ def dose_workflow() -> Workflow:
                     budget={"max_tool_calls": 20}, build=build)
 
 
-@pytest.fixture
-def served():
-    """serve(server) -> its HTTP address, from uvicorn in a thread on a free 127.0.0.1 port."""
-    running = []
-
-    def serve(server):
-        probe = socket.socket()
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-        probe.close()
-        web = uvicorn.Server(uvicorn.Config(server.mcp.http_app(), host="127.0.0.1", port=port, log_level="warning"))
-        thread = threading.Thread(target=web.run, daemon=True)
-        thread.start()
-        running.append((web, thread))
-        deadline = time.monotonic() + 20
-        while not web.started:
-            assert time.monotonic() < deadline, "the test MCP server did not start"
-            time.sleep(0.05)
-        return f"http://127.0.0.1:{port}/mcp"
-
-    yield serve
-    for web, thread in running:
-        web.should_exit = True
-        thread.join(10)
-
-
 def test_a_workflow_pauses_on_a_held_call_and_resumes_once_it_is_approved(stack, served, tmp_path):
     agent, operator = held_pair(stack)
     endpoint = McpServer(served(agent), {CALLER_HEADER: "workflow-test", RUN_HEADER: "held1"})
@@ -265,3 +299,92 @@ def test_the_agent_server_reports_its_role_and_every_workflow_tool_as_a_service(
     offered = {fn.__name__ for fn in server.workflows.tools()}
     assert set(info["services"]["workflows"].values()) == offered
     assert info["services"]["workflows"]["list_runs"] == "list_runs" and "skills" not in info["services"]
+
+
+async def _three_reads(ctx, args, previous):
+    sample = await ctx.call("SAMPLE_get_sample")
+    here = await ctx.call(DOSE, {"request": "{}"})
+    there = await ctx.call(DOSE, {"request": '{"x_m":0.0,"y_m":0.0}'})
+    return {"sample": sample, "here": here, "there": there}
+
+
+three_reads = register_block(Block(name="test_three_reads", summary="Three reads in one node, two of them held.", run=_three_reads,
+                                   outputs={"sample": "any", "here": "any", "there": "any"}, tools=("SAMPLE_get_sample", DOSE)))
+
+
+def three_reads_workflow() -> Workflow:
+    def build(use):
+        graph = StateGraph(WorkflowState)
+        graph.add_node("reads", use.block("test_three_reads"))
+        graph.add_edge(START, "reads")
+        graph.add_edge("reads", END)
+        return graph
+
+    return Workflow(name="held_three_reads", summary="One node with an allowed call and two held ones.", inputs={},
+                    budget={"max_tool_calls": 20}, build=build)
+
+
+def test_a_resumed_node_sends_each_call_once_and_each_approval_is_used_once(stack, served, tmp_path):
+    log = tmp_path / "tools.jsonl"
+    agent = stack("agent", SAMPLE, needs_approval={"SAMPLE": ["get_dose"]}, tool_log_path=str(log))
+    operator = stack("operator", SAMPLE)
+    address = served(agent)
+    workflow = three_reads_workflow()
+    journal = tmp_path / "runs" / "three1.journal.json"
+
+    def endpoint():
+        return McpServer(address, {CALLER_HEADER: "workflow-test", RUN_HEADER: "three1"})
+
+    record = run(run_workflow(workflow, {}, instrument=endpoint(), state_dir=tmp_path, run_id="three1"))
+    held = []
+    for _ in range(2):
+        assert record["state"] == "waiting", record
+        [waiting] = record["approvals"]
+        held.append(waiting)
+        run(operator_call(operator, "approve_call", {"request_id": waiting["request_id"]}))
+        record = run(resume_workflow("three1", instrument=endpoint(), state_dir=tmp_path, find=lambda name: workflow))
+    assert record["state"] == "done", record
+    assert [h["arguments"]["request"] for h in held] == ["{}", '{"x_m":0.0,"y_m":0.0}']
+    ran = [(row["tool"], json.dumps(row["arguments"], sort_keys=True)) for row in read_tool_log(log)]
+    assert sorted(ran) == sorted([("SAMPLE_get_sample", "{}"), (DOSE, json.dumps({"request": "{}"})),
+                                  (DOSE, json.dumps({"request": '{"x_m":0.0,"y_m":0.0}'}))]), ran
+    assert run(operator_call(operator, "list_pending_approvals"))["result"] == []
+    assert not journal.exists()
+
+
+operator_process = """
+import asyncio, json, sys
+import tango
+import asyncroscopy.mcp.mcp_server as mcp_server
+from fastmcp import Client
+
+access, permissions_file, request_id = json.loads(sys.argv[1]), sys.argv[2], sys.argv[3]
+mcp_server.DeviceProxy = lambda name: tango.DeviceProxy(access[name])
+database = type("Db", (), {"get_device_exported": lambda self, p: type("E", (), {"value_string": list(access)})()})()
+server = mcp_server.MCPServer("perm-test", "localhost", 1, blocked_classes=[], needs_approval={}, data_device_address="asyncroscopy/data/default",
+                              verbose=False, endpoint_role="operator", database=database, permissions_file=permissions_file)
+server.setup(print_summary=False)
+
+async def main():
+    async with Client(server.mcp) as client:
+        pending = (await client.call_tool("list_pending_approvals", {})).structured_content["result"]
+        approved = (await client.call_tool("approve_call", {"request_id": request_id})).structured_content
+        print(json.dumps({"pending": [p["request_id"] for p in pending], "status": approved["status"]}))
+
+asyncio.run(main())
+"""
+
+
+def test_an_operator_endpoint_in_another_process_approves_a_call_this_one_holds(stack, tango_ctx):
+    agent = stack("agent", SAMPLE, needs_approval={"SAMPLE": ["get_dose"]})
+    held = run(call(agent, DOSE, {"request": "{}"})).structured_content
+    assert held["status"] == "approval_required"
+    access = {name: tango_ctx.get_device_access(name) for name in (SAMPLE,)}
+    done = subprocess.run([sys.executable, "-c", operator_process, json.dumps(access), str(stack.permissions_file), held["request_id"]],
+                          capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr[-2000:]
+    reply = json.loads(done.stdout.strip().splitlines()[-1])
+    assert reply == {"pending": [held["request_id"]], "status": "approved"}
+    ran = run(call(agent, DOSE, {"request": "{}"}))
+    assert not ran.is_error, ran
+    assert run(call(agent, DOSE, {"request": "{}"})).structured_content["status"] == "approval_required"

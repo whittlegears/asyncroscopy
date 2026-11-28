@@ -1,11 +1,9 @@
+import os
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import messagebox, simpledialog, ttk
 
-from gevent import os
 import numpy as np
 import tango
-# from autoscript_tem_microscope_client import TemMicroscopeClient
-
 
 
 class AdvancedMicroscopeGUI:
@@ -25,68 +23,52 @@ class AdvancedMicroscopeGUI:
         self.stage = tango.DeviceProxy("asyncroscopy/stage/default")
         self.microscope = tango.DeviceProxy("asyncroscopy/instrument/default")
 
-        # --- Internal Coordinate States ---
         self.stage_x, self.stage_y, self.stage_z = 0.0, 0.0, 0.0
         self.stage_alpha, self.stage_beta = 0.0, 0.0
         self.beam_x, self.beam_y, self.defocus = 0.0, 0.0, 0.0
         self.beam_alpha, self.beam_beta = 0.0, 0.0
 
-        # --- StringVars for UI Inputs ---
         self.x_var, self.y_var, self.z_var = tk.StringVar(value="0.00"), tk.StringVar(value="0.00"), tk.StringVar(value=f"{0.00:.2f}")
         self.alpha_var, self.beta_var = tk.StringVar(value="0.00"), tk.StringVar(value="0.00")
         self.bsx_var, self.bsy_var, self.defocus_var = tk.StringVar(value="0.00"), tk.StringVar(value="0.00"), tk.StringVar(value=f"{0.00:.2f}")
         self.btx_var, self.bty_var = tk.StringVar(value="0.00"), tk.StringVar(value="0.00")
 
-        # Custom Styling
         self.style = ttk.Style()
         self.style.theme_use('default')
         self.style.configure('TLabel', background='#222222', foreground='#ffffff', font=("Arial", 9, "bold"))
         
-        # ==========================================
-        # 1. TOP SECTION: EDITABLE DIGITAL READOUTS
-        # ==========================================
         self.readout_frame = tk.LabelFrame(root, text=" Target Parameters (Editable) ", bg="#161616", fg="#ffffff", font=("Arial", 10, "bold"), padx=10, pady=10)
         self.readout_frame.pack(fill="x", padx=15, pady=10)
 
-        # Row 0: Physical Stage Coordinates
         self.create_grid_field(self.readout_frame, "Stage X:", self.x_var, "nm", 0, 0)
         self.create_grid_field(self.readout_frame, "Stage Y:", self.y_var, "nm", 0, 3)
         self.create_grid_field(self.readout_frame, "Stage Z:", self.z_var, "nm", 0, 6)
         self.create_grid_field(self.readout_frame, "Tilt α:", self.alpha_var, "deg", 0, 9)
         self.create_grid_field(self.readout_frame, "Tilt β:", self.beta_var, "deg", 0, 12)
 
-        # Row 1: Electronic Beam Coordinates
         self.create_grid_field(self.readout_frame, "Beam S-X:", self.bsx_var, "nm", 1, 0)
         self.create_grid_field(self.readout_frame, "Beam S-Y:", self.bsy_var, "nm", 1, 3)
         self.create_grid_field(self.readout_frame, "Defocus Δf:", self.defocus_var, "nm", 1, 6)
         self.create_grid_field(self.readout_frame, "Beam T-X:", self.btx_var, "mrad", 1, 9)
         self.create_grid_field(self.readout_frame, "Beam T-Y:", self.bty_var, "mrad", 1, 12)
 
-        # Global Execution Button
         btn_go = tk.Button(self.readout_frame, text="EXECUTE ALL ABSOLUTE DRIVES 🚀", font=("Arial", 10, "bold"), bg="#28a745", fg="white", command=self.go_to_absolute)
         btn_go.grid(row=2, column=0, columnspan=15, pady=8, padx=5, sticky="ew")
 
-        # ==========================================
-        # 2. MIDDLE SECTION: MANUAL CONTROL PANELS
-        # ==========================================
         self.main_control_area = tk.Frame(root, bg="#222222")
         self.main_control_area.pack(fill="both", expand=True, padx=15, pady=5)
 
-        # ---- LEFT BLOCK: MECHANICAL STAGE PANELS ----
         self.stage_block = tk.LabelFrame(self.main_control_area, text=" Mechanical Stage System ", bg="#2b2b2b", fg="#00ffcc", font=("Arial", 11, "bold"), padx=5, pady=5)
         self.stage_block.pack(side="left", fill="both", expand=True, padx=5)
 
-        # Tilt α/β Panel
         self.panel_tilt = tk.LabelFrame(self.stage_block, text=" Stage Tilt (α/β) ", bg="#2b2b2b", fg="white", font=("Arial", 9))
         self.panel_tilt.grid(row=0, column=0, padx=5, pady=5)
         self.build_dpad(self.panel_tilt, "α+", "α-", "β-", "β+", lambda mx, my: self.jog_engine(mb=mx, ma=my), reset_cb=self.reset_stage_tilt)
 
-        # Translation X/Y Panel
         self.panel_xy = tk.LabelFrame(self.stage_block, text=" Stage XY ", bg="#2b2b2b", fg="white", font=("Arial", 9))
         self.panel_xy.grid(row=0, column=1, padx=5, pady=5)
         self.build_dpad(self.panel_xy, "Y+", "Y-", "X-", "X+", lambda mx, my: self.jog_engine(mx=mx, my=my), reset_cb=self.reset_stage_xy)
 
-        # Elevation Z Panel
         self.panel_z = tk.LabelFrame(self.stage_block, text=" Stage Z ", bg="#2b2b2b", fg="white", font=("Arial", 9), padx=5)
         self.panel_z.grid(row=0, column=2, padx=5, pady=5, sticky="ns")
         tk.Button(self.panel_z, text="⏫ Z+", font=("Arial", 10), width=5, command=lambda: self.jog_engine(mz=1)).pack(pady=5)
@@ -96,36 +78,28 @@ class AdvancedMicroscopeGUI:
         self.panel_save = tk.LabelFrame(self.stage_block, text=" Save Positions ", bg="#2b2b2b", fg="white", font=("Arial", 9), padx=5)
         tk.Button(self.panel_save, text="💾 Save", font=("Arial", 10), width=5, command=self.save_position).pack(pady=5)
 
-        # ---- CENTER DIVISION: GLOBAL MASTER HOME BUTTON ----
         self.center_divider = tk.Frame(self.main_control_area, bg="#222222")
         self.center_divider.pack(side="left", padx=10, fill="y")
         btn_master_home = tk.Button(self.center_divider, text="🌐\n\nH\nO\nM\nE\n\nA\nL\nL", font=("Arial", 10, "bold"), bg="#bd2130", fg="white", width=4, relief="raised", command=self.reset_all)
         btn_master_home.pack(fill="y", expand=True, pady=10)
 
-        # ---- RIGHT BLOCK: OPTICAL BEAM PANELS ----
         self.beam_block = tk.LabelFrame(self.main_control_area, text=" Electronic Beam Deflection ", bg="#232d37", fg="#ffcc00", font=("Arial", 11, "bold"), padx=5, pady=5)
         self.beam_block.pack(side="right", fill="both", expand=True, padx=5)
 
-        # Beam Tilt Panel
         self.panel_btilt = tk.LabelFrame(self.beam_block, text=" Beam Tilt (X/Y) ", bg="#232d37", fg="white", font=("Arial", 9))
         self.panel_btilt.grid(row=0, column=0, padx=5, pady=5)
         self.build_dpad(self.panel_btilt, "TY+", "TY-", "TX-", "TX+", lambda mx, my: self.jog_engine(mbtx=mx, mbty=my), reset_cb=self.reset_beam_tilt)
 
-        # Beam Shift Panel
         self.panel_bshift = tk.LabelFrame(self.beam_block, text=" Beam Shift (X/Y) ", bg="#232d37", fg="white", font=("Arial", 9))
         self.panel_bshift.grid(row=0, column=1, padx=5, pady=5)
         self.build_dpad(self.panel_bshift, "BSY+", "BSY-", "BSX-", "BSX+", lambda mx, my: self.jog_engine(mbsx=mx, mbsy=my), reset_cb=self.reset_beam_shift)
 
-        # Defocus Delta f Panel
         self.panel_df = tk.LabelFrame(self.beam_block, text=" Defocus (Δf) ", bg="#232d37", fg="white", font=("Arial", 9), padx=5)
         self.panel_df.grid(row=0, column=2, padx=5, pady=5, sticky="ns")
         tk.Button(self.panel_df, text="⏫ Δf+", font=("Arial", 10), width=5, command=lambda: self.jog_engine(mdf=1)).pack(pady=5)
         tk.Button(self.panel_df, text="🔄 H", font=("Arial", 9), width=5, bg="#444444", fg="white", command=self.reset_defocus).pack(pady=5)
         tk.Button(self.panel_df, text="⏬ Δf-", font=("Arial", 10), width=5, command=lambda: self.jog_engine(mdf=-1)).pack(pady=5)
 
-        # ==========================================
-        # 3. BOTTOM SECTION: STEP SIZE CONFIGS
-        # ==========================================
         self.step_frame = tk.LabelFrame(root, text=" Incremental Step Sizes ", bg="#222222", fg="#ffffff", font=("Arial", 9, "bold"), padx=10, pady=5)
         self.step_frame.pack(fill="x", padx=15, pady=10)
 
@@ -150,14 +124,12 @@ class AdvancedMicroscopeGUI:
         self.sync_ui_to_vars()
 
     def auto_focus(self):
-        # Placeholder for autofocus functionality
         if 'auto_focus' in self.microscope.get_command_list():
             self.microscope.auto_focus()
         else:
             messagebox.showinfo("Auto Focus", "Auto-focus functionality is not implemented yet.")
 
     def save_position(self):
-        from tkinter import simpledialog
         positions = self.microscope.get_stage()
         name = simpledialog.askstring("Save Position", "Enter a name for this position:")
         self.saved_stage_positions.setdefault(name, positions)
@@ -192,7 +164,6 @@ class AdvancedMicroscopeGUI:
         self.beam_alpha *= 1e3
         self.beam_beta *= 1e3
 
-    # --- UI Helpers ---
     def create_grid_field(self, parent, text, var, unit, r, c):
         tk.Label(parent, text=text, bg="#161616", fg="white", font=("Arial", 9)).grid(row=r, column=c, padx=2, pady=4, sticky="e")
         ttk.Entry(parent, textvariable=var, width=7, font=("Consolas", 10)).grid(row=r, column=c+1, padx=2, pady=4)
@@ -210,7 +181,6 @@ class AdvancedMicroscopeGUI:
         tk.Button(parent, text=f"▶️ {rt_txt}", font=("Arial", 9), width=5, command=lambda: command_cb(1, 0)).grid(row=1, column=2, pady=3, padx=3)
         tk.Button(parent, text=f"🔽 {dn_txt}", font=("Arial", 9), width=5, command=lambda: command_cb(0, -1)).grid(row=2, column=1, pady=3, padx=3)
 
-    # --- Processing Logic Engine ---
     def set_stage(self):
         """Move the mechanical stage to the target coordinates."""
         self.microscope.move_stage([self.stage_x*1e-9, self.stage_y*1e-9, self.stage_z*1e-9, 
@@ -294,7 +264,6 @@ class AdvancedMicroscopeGUI:
             self.sync_ui_to_vars()
         except ValueError:
             messagebox.showerror("Error", "Absolute move failed. Check syntax configuration numbers.")
-    # --- Granular Zero-Reset Implementations ---
     def reset_stage_xy(self):
         self.stage_x, self.stage_y = 0.0, 0.0
         self.sync_ui_to_vars()

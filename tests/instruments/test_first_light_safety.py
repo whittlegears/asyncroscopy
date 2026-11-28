@@ -60,7 +60,6 @@ def blanker_at_save(monkeypatch) -> list[bool]:
     return seen
 
 
-# a fault is reported
 def test_the_launcher_reports_a_device_in_fault_instead_of_ready(monkeypatch, capsys):
     states = {"asyncroscopy/stage/default": (tango.DevState.FAULT, "Not connected to AutoScript: refused"),
               "asyncroscopy/scan/default": (tango.DevState.ON, "ON")}
@@ -120,7 +119,6 @@ def test_a_refused_autoscript_connection_says_why_in_the_status(monkeypatch):
     assert any(k == "status" and "10.0.0.1:9095" in v and "refused" in v for k, v in device.calls)
 
 
-# check_stack refuses a hardware stack
 class FakeAgent:
     def __init__(self, reply):
         self.reply = reply
@@ -145,7 +143,6 @@ def test_check_stack_runs_only_on_a_simulated_stack(reply, simulated):
     assert ok is simulated and why
 
 
-# CEOS
 def _ceos_reply_once(reply: dict) -> tuple[int, threading.Thread]:
     server = socket.socket()
     server.bind(("127.0.0.1", 0))
@@ -186,7 +183,6 @@ def test_a_ceos_error_reply_raises_instead_of_reading_as_success():
     thread.join(5)
 
 
-# stage moves near the pole piece
 def test_z_or_tilt_moves_use_the_safe_move_and_xy_moves_the_plain_one():
     client = FakeAutoScriptClient()
     stage = FakeStageProxy(client)
@@ -312,7 +308,6 @@ def test_a_blank_during_4dstem_stops_it(autoscript):
     assert len(taken) == 3 and client.optics.blanker._blanked
 
 
-# the e-stop blank does not queue
 def test_blank_beam_does_not_wait_for_a_running_acquisition(autoscript):
     device, client = autoscript
     # The AutoScript client runs one call at a time so the blank needs its own connection.
@@ -346,7 +341,6 @@ def test_the_microscope_server_runs_without_tangos_command_lock(monkeypatch):
     assert chosen == [tango.SerialModel.NO_SYNC]
 
 
-# the stage gets time to move
 def test_the_stage_proxy_gets_the_stage_timeout(monkeypatch):
     timeouts = {}
 
@@ -365,5 +359,6 @@ def test_the_stage_proxy_gets_the_stage_timeout(monkeypatch):
     device.stage_device_address, device.data_device_address, device.stage_timeout_seconds = "s/t/1", "d/t/1", 240.0
     device._detector_proxies = {}
     device.info_stream = device.error_stream = lambda *a: None
+    device._configured_addresses = dict
     auto_script_module.AutoScriptMicroscope._connect_detector_proxies(device)
     assert timeouts == {"s/t/1": 240_000, "d/t/1": 3_600_000}

@@ -155,7 +155,6 @@ def test_a_live_subscriber_gets_exactly_the_runs_events_in_order_within_2_s(tang
     assert tail.main([str(s) for s in sources] + ["--run", run, "--no-follow", "--json"]) == 0
 
 
-# writers
 WRITER = """
 import sys, time
 from asyncroscopy.trace.writer import TraceWriter
@@ -196,7 +195,6 @@ def test_old_lines_without_seq_are_still_read_and_numbering_continues(tmp_path):
     assert [e["action"] for e in merged][:3] == ["Old.step", "Old.step", "score_map"]
 
 
-# growth, partial lines and rotation
 def test_growth_and_a_line_cut_short_are_read_once(tmp_path):
     path = tmp_path / "jobs.jsonl"
     writer = TraceWriter(path, "job")
@@ -276,7 +274,6 @@ def test_follow_trace_filters_by_caller_device_and_since(tmp_path):
     assert [e["caller"] for e in live] == ["alice"]
 
 
-# the operator endpoint's cursor tool
 class _NoDevices:
     value_string: list = []
 
@@ -325,9 +322,6 @@ def test_trace_since_is_on_the_operator_endpoint_only_and_pages_by_cursor(tmp_pa
     page = asyncio.run(poll(page["cursor"], 10))
     assert [e["action"] for e in page["events"]] == ["Mapper.done"]
     assert asyncio.run(poll(page["cursor"], 10))["events"] == []
-
-
-# rotation by the writer itself
 
 
 def rotating(path, bytes_=400, keep=0):

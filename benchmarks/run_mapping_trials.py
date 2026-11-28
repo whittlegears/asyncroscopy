@@ -151,7 +151,7 @@ async def main(args: argparse.Namespace) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--n", type=int, default=10)
-    parser.add_argument("--model", default="qwen3:8b")
+    parser.add_argument("--model", default=AgentConfig.from_env().model)
     parser.add_argument("--runners", nargs="+", default=["graph", "general"], choices=["graph", "general"])
     parser.add_argument("--tasks", nargs="*", default=None, choices=list(TASKS))
     parser.add_argument("--out", default=str(HERE / "results" / "mapping_trials.json"), help="Results JSON file.")

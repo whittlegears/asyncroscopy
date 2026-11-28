@@ -38,7 +38,7 @@ class TestDigitalTwin:
         assert "fov_m" in parameters
         assert parameters["scan_detectors"] == ["adf", "bf", "haadf"]
         assert parameters["spectrum_detectors"] == ["eds"]
-        assert parameters["camera_detectors"] == []  # no camera model: acquire_camera_image is refused
+        assert "BM-Ceta" in parameters["camera_detectors"]  # the CAMERA device's names, which all give the one simulated camera
         assert "scan" in parameters["device_proxies"]
         assert "detectors" not in parameters, "device roles must not be published as detectors"
 

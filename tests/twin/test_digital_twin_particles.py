@@ -55,7 +55,7 @@ def test_particle_twin_fov_round_trip(particles_twin_proxy):
     assert particles_twin_proxy.get_fov() == pytest.approx(18e-9)
 
 
-def test_particle_twin_keeps_its_truth_for_the_operator_and_its_beam_position_read_only(particles_twin_proxy):
+def test_particle_twin_keeps_its_truth_for_the_operator_and_checks_a_beam_position_write(particles_twin_proxy):
     import json
 
     from asyncroscopy.instruments.electron_microscope.digital_twin_particles import DigitalTwinParticles
@@ -66,19 +66,20 @@ def test_particle_twin_keeps_its_truth_for_the_operator_and_its_beam_position_re
     truth = json.loads(particles_twin_proxy.export_ground_truth())
     assert truth["particle_count"] >= 0 and "sample_seed" in truth
     assert declared_hints(DigitalTwinParticles)["export_ground_truth"]["operator_only"] is True
-    with pytest.raises(tango.DevFailed):
-        particles_twin_proxy.beam_pos = [0.2, 0.3]  # only place_beam moves the beam, with its checks
+    with pytest.raises(tango.DevFailed, match="place_beam takes"):
+        particles_twin_proxy.beam_pos = [1.2, 0.3]
+    particles_twin_proxy.beam_pos = [0.2, 0.3]
+    assert list(particles_twin_proxy.beam_pos) == pytest.approx([0.2, 0.3])
     particles_twin_proxy.place_beam([0.25, 0.75])
     assert list(particles_twin_proxy.beam_pos) == pytest.approx([0.25, 0.75])
 
 
-@pytest.mark.parametrize("twin_class", ["DigitalTwin", "DigitalTwinParticles", "PolycrystallineGoldDigitalTwin"])
+@pytest.mark.parametrize("twin_class", ["DigitalTwinParticles", "PolycrystallineGoldDigitalTwin"])
 def test_a_twin_without_a_camera_model_refuses_a_camera_image(twin_class):
     """It used to return a HAADF scan labelled as a camera image; now it says it has no camera."""
-    from asyncroscopy.instruments.electron_microscope import digital_twin, digital_twin_particles, polycrystalline_gold_digital_twin
+    from asyncroscopy.instruments.electron_microscope import digital_twin_particles, polycrystalline_gold_digital_twin
 
-    module = {"DigitalTwin": digital_twin, "DigitalTwinParticles": digital_twin_particles,
-              "PolycrystallineGoldDigitalTwin": polycrystalline_gold_digital_twin}[twin_class]
+    module = {"DigitalTwinParticles": digital_twin_particles, "PolycrystallineGoldDigitalTwin": polycrystalline_gold_digital_twin}[twin_class]
     cls = getattr(module, twin_class)
     twin = cls.__new__(cls)
     with pytest.raises(tango.DevFailed, match="no camera model"):

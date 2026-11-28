@@ -15,17 +15,9 @@ from asyncroscopy.utils.commands import action_hints_attribute, command
 class EDS(Device):
     """EDS detector settings device."""
 
-    # ------------------------------------------------------------------
-    # Device properties — set per-deployment in the Tango DB
-    # ------------------------------------------------------------------
-
-    # (no hardware connection properties needed — EDS is settings-only)
 
     action_hints = action_hints_attribute()
 
-    # ------------------------------------------------------------------
-    # Attributes
-    # ------------------------------------------------------------------
 
     exposure_time = attribute(
         label="Dwell Time",
@@ -39,22 +31,14 @@ class EDS(Device):
     )
 
 
-    # ------------------------------------------------------------------
-    # Initialisation
-    # ------------------------------------------------------------------
-
     def init_device(self) -> None:
         Device.init_device(self)
         self.set_state(DevState.ON)
 
-        # Sensible defaults — operators override via Tango DB or client writes
         self._exposure_time: float = 1   # 1 s
 
         self.info_stream("EDS device initialised")
 
-    # ------------------------------------------------------------------
-    # Attribute read / write
-    # ------------------------------------------------------------------
 
     def read_exposure_time(self) -> float:
         return self._exposure_time
@@ -62,9 +46,6 @@ class EDS(Device):
     def write_exposure_time(self, value: float) -> None:
         self._exposure_time = value
 
-    # ------------------------------------------------------------------
-    # Commands
-    # ------------------------------------------------------------------
 
     @command(dtype_in=float, doc_in=":param seconds: Time the next EDS spectrum counts for, in seconds, from 1e-6 to 100.",
              risk="high", role="setting.set", routine=True)
@@ -81,10 +62,6 @@ class EDS(Device):
         """Read how long an EDS spectrum counts for, in seconds."""
         return self._exposure_time
 
-
-# ----------------------------------------------------------------------
-# Server entry point
-# ----------------------------------------------------------------------
 
 if __name__ == "__main__":
     EDS.run_server()

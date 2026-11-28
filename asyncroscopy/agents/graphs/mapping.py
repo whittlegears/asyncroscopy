@@ -29,6 +29,7 @@ from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.goals import DOSE
 from asyncroscopy.agents.mcp_tools import McpServer, result_text
 from asyncroscopy.contracts import load, validate
+from asyncroscopy.core.names import devices_of_kind
 from asyncroscopy.core.map_analysis import AnalysisFailed, score_map, stitch_map
 
 ABORT_WAIT_S = 60.0  # how long an error path waits for an aborted map to stop before releasing
@@ -85,15 +86,8 @@ def _parse_json(text: str) -> dict:
     return json.loads(match.group(0))
 
 
-
 def _to_metres(value: float, metres_below: float) -> float:
-    """Repair a length a model wrote in the wrong unit.
-
-    Above 1 it can only be nanometres; between ``metres_below`` and 1 it is
-    micrometres (0.2 meant 0.2 um, not 20 cm); up to ``metres_below`` it is
-    already metres and is never rescaled. ``metres_below`` is the largest value
-    plausible in metres for this instrument (``_plausible_limits``).
-    """
+    """Repair a length a model wrote in the wrong unit: above 1 is nm, from ``metres_below`` to 1 is um."""
     if abs(value) > 1.0:
         return value * 1e-9
     if abs(value) > metres_below:
@@ -102,14 +96,7 @@ def _to_metres(value: float, metres_below: float) -> float:
 
 
 def _plausible_limits(context: dict) -> tuple[float, float]:
-    """(largest field of view, largest stage coordinate) plausible in metres on this instrument.
-
-    Taken from what the endpoint reports, so an SEM's 2 mm field of view or a stage at x = 25 mm is
-    kept as metres, while a STEM's (fov ~ 200 nm, stage near 0) keeps the old cut-offs: 1 mm for a
-    field of view, 1 cm for a coordinate. Neither the stage limits nor the Mapper profile's are
-    reachable from here, so the scale is the current field of view (a tile up to 1000 times it) and
-    stage position (ten times it).
-    """
+    """(largest field of view, largest stage coordinate) plausible in metres, scaled from the current field and stage."""
     fov = context.get("fov_m")
     stage = [abs(float(v)) for v in (context.get("stage_position_m") or [])[:2] if isinstance(v, (int, float))]
     bounds = [abs(float(v)) for v in (context.get("sample_bounds_m") or []) if isinstance(v, (int, float))]
@@ -141,10 +128,8 @@ class MappingGraph:
     async def _mapper(self) -> str:
         """The Mapper's tool prefix: Mapper, or Mapper_<key> when an endpoint exports several."""
         if self._mapper_prefix is None:
-            if self._tool_names is None:
-                self._tool_names = {t.name for t in await self.instrument.list_tools()}
             configured = settings.get().mapper
-            candidates = sorted(n[: -len("_reserve")] for n in self._tool_names if n.startswith("Mapper") and n.endswith("_reserve"))
+            candidates = devices_of_kind(await self.instrument.call_json("endpoint_info"), "map")
             if configured:
                 if configured not in candidates:
                     raise RuntimeError(f"ASYNCROSCOPY_MAPPER={configured!r} is not one of {candidates}")
@@ -179,7 +164,6 @@ class MappingGraph:
             raise RuntimeError("no device with both move_stage and acquire_scanned_image on the MCP endpoint")
         raise RuntimeError(f"several microscopes {candidates}; set ASYNCROSCOPY_MICROSCOPE to the one to map with")
 
-    # nodes
     async def gather_context(self, state: MapState) -> MapState:
         microscope = await self._microscope()
         await self._mapper()  # a missing Mapper, or more than one, ends the run here before the model is asked
@@ -226,11 +210,7 @@ class MappingGraph:
 
     @staticmethod
     def _complete_plan(plan: dict, context: dict, request: str, from_model: bool = True) -> dict:
-        """Fill gaps and repair obvious slips (units, swapped corners) so a small model's plan is usable.
-
-        The request text overrides size and EDS only for a plan the model wrote; a plan passed in
-        directly is the caller's decision and keeps its per_tile and size.
-        """
+        """Fill gaps and repair slips (units, swapped corners) in a model's plan; a plan passed in keeps its size and per_tile."""
         allowed = {"box_m", "size_m", "centre_m", "fov_m", "overlap", "imsize", "dwell_s", "detectors", "per_tile", "eds_exposure_s", "eds_map_points", "dose_budget_e_per_a2", "order", "z_m", "label"}
         plan = {k: v for k, v in plan.items() if k in allowed}
         fov_max, coord_max = _plausible_limits(context)  # what is plausible in metres on this instrument
@@ -298,8 +278,7 @@ class MappingGraph:
 
     @staticmethod
     def _set_per_tile(plan: dict, per_tile: list) -> dict:
-        """EDS per tile when asked for; otherwise no per_tile field (or EDS settings) at all, since an
-        instrument profile without EDS (sem, yaml) refuses the field even when it is empty."""
+        """EDS per tile only when asked for: a profile without EDS refuses even an empty per_tile."""
         if per_tile:
             plan["per_tile"] = per_tile[:1]
         else:
@@ -416,14 +395,8 @@ class MappingGraph:
             lines.append(f"{eds} EDS spectra are marked on the map.")
         return {"report": "\n".join(lines)}
 
-    # helpers
     async def _release(self, state: MapState) -> None:
-        """Stop the job if it may still be running, then release the reservation.
-
-        Release refuses a running job, so on an error path a started map is aborted
-        first (abort blanks the beam) rather than left running with nobody watching.
-        Errors are ignored: the endpoint may be the reason we are failing.
-        """
+        """Abort the job if it may still run, then release it; errors are ignored, as the endpoint may be why we fail."""
         if not state.get("reservation_id") or state.get("released"):
             return
         try:
@@ -451,7 +424,6 @@ class MappingGraph:
         run.__name__ = node.__name__
         return run
 
-    # graph
     def build(self) -> CompiledStateGraph:
         graph = StateGraph(MapState)
         for name in ("gather_context", "make_plan", "reserve", "start", "wait", "points", "score", "report"):

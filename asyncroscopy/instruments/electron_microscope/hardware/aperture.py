@@ -16,12 +16,8 @@ from asyncroscopy.utils.commands import action_hints_attribute, command
 class APERTURE(Device):
     """Base device for a motorized aperture mechanism."""
 
-    # The risk, role and stop of each command, as its @command declares them. The MCP server reads this.
     action_hints = action_hints_attribute()
 
-    # ------------------------------------------------------------------
-    # Attributes
-    # ------------------------------------------------------------------
 
     available_mechanisms = attribute(
         label="Available mechanisms",
@@ -98,9 +94,6 @@ class APERTURE(Device):
         doc="Selected aperture position [x, y] in meters",
     )
 
-    # ------------------------------------------------------------------
-    # Initialisation
-    # ------------------------------------------------------------------
 
     def init_device(self) -> None:
         Device.init_device(self)
@@ -108,9 +101,6 @@ class APERTURE(Device):
         self.set_state(DevState.ON)
         self.info_stream("APERTURE device initialised")
 
-    # ------------------------------------------------------------------
-    # Attribute read / write
-    # ------------------------------------------------------------------
 
     def read_available_mechanisms(self) -> list[str]:
         return self._read_available_mechanisms()
@@ -151,9 +141,6 @@ class APERTURE(Device):
     def write_position(self, value) -> None:
         self._write_position(value)
 
-    # ------------------------------------------------------------------
-    # Commands
-    # ------------------------------------------------------------------
 
     @command(risk="high", role="setting.set")
     def insert(self) -> None:
@@ -180,9 +167,6 @@ class APERTURE(Device):
         """Reset the aperture's stored positions."""
         self._reset_positions()
 
-    # ------------------------------------------------------------------
-    # Hardware helpers
-    # ------------------------------------------------------------------
 
     @abstractmethod
     def _read_available_mechanisms(self):

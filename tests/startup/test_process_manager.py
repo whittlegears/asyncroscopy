@@ -52,7 +52,6 @@ def test_start_process_tracks_process_group(tmp_path, monkeypatch):
         assert proc.command == ["uv", "run", "dummy"]
         assert proc in manager.active_processes
 
-        # State file must contain active pids
         assert manager.state_file.exists()
         pids = json.loads(manager.state_file.read_text(encoding="utf-8"))
         assert pids == [9999]

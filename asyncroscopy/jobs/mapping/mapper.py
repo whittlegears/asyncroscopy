@@ -51,7 +51,6 @@ from .run_file import RunFile, job_trace_events
 DEFAULT_STAGE_SIGMA_M = 5e-8  # used when neither the Mapper nor the STAGE gives one, and suits a typical TEM stage
 
 
-
 class Mapper(JobDevice):
     JOB_KIND = "map acquisition: a grid of images over a stage box, stitched into a zoomable map when it finishes"
     PLAN_EXAMPLE = {"size_m": [6e-7, 6e-7], "fov_m": 1.6e-7}  # a 600 nm square around the current stage position
@@ -91,13 +90,12 @@ class Mapper(JobDevice):
         self._pipeline_: Pipeline | None = None
         super().init_device()
 
-    # The profile and what it sees
     def _profile_settings(self, declared: dict[str, Setting]) -> dict[str, Any]:
         """The profile's own settings, from this Mapper's device properties in the Tango database (defaults otherwise)."""
         stored: dict = {}
         if declared:
             try:
-                stored = tango.Util.instance().get_database().get_device_property(self.get_name(), list(declared))
+                stored = tango.Util.instance(False).get_database().get_device_property(self.get_name(), list(declared))
             except tango.DevFailed as exc:  # with no database every setting keeps its default
                 self.warn_stream(f"profile settings not read from the database ({exc.args[0].desc.strip()[:200]}); using defaults")
         return {name: setting.parse(list(stored.get(name, []))) for name, setting in declared.items()}
@@ -140,7 +138,6 @@ class Mapper(JobDevice):
             self._pipeline_ = Pipeline(self.analysis_url, float(self.max_drift_m_per_s), self.aborting, self._lock, self._save, self.warn_stream, backend=self.stitch_service)
         return self._pipeline_
 
-    # Plan
     def read_job_kind(self) -> str:
         return self.profile().job_kind or self.JOB_KIND
 
@@ -167,10 +164,7 @@ class Mapper(JobDevice):
         return resolved
 
     def _check_needs(self, profile: InstrumentProfile, plan: dict) -> None:
-        """Refuse a plan whose instrument lacks a command the profile needs, at reserve, before anything moves.
-
-        The commands are kept in the plan as ``drives`` ({device address: commands}), so auto mode can tell
-        whether it runs every one of them before it starts the job."""
+        """Refuse at reserve a plan whose instrument lacks a command the profile needs; record them as ``drives``."""
         needs = profile.needed_commands(plan)
         shift_commands = live_drift.needed_commands(plan, profile)
         if plan.get("zoom_only"):
@@ -236,8 +230,7 @@ class Mapper(JobDevice):
         xy = [float(target["x"]), float(target["y"])] if "x" in target and "y" in target else {k: float(v) for k, v in target.items()}
         return {"ok": inside, "inside_box": inside, "box_m": [x_min, x_max, y_min, y_max], "xy_m": xy, "image_half_width_m": half_x}
 
-    # Run file
-    def _run(self, job: dict) -> RunFile:
+    def _run_file(self, job: dict) -> RunFile:
         """The job's run file (not opened)."""
         if "run_path" not in job:
             # Tiled only serves files under the DATA save path, so the run file must live there.
@@ -259,7 +252,7 @@ class Mapper(JobDevice):
 
     def _write_trace(self, job: dict) -> None:
         """This job's own events into the run file (run_file.job_trace_events); the run file names the trace file and offset."""
-        run = self._run(job)
+        run = self._run_file(job)
         offset = int(job.get("trace_offset", 0))
         events, dropped = job_trace_events(Path(self.trace_path), job["reservation_id"], offset, float(job.get("created") or 0.0))
         run.write_trace(events, str(self.trace_path), offset, dropped)
@@ -269,7 +262,7 @@ class Mapper(JobDevice):
         if job.get("run_closed"):
             return
         self._write_trace(job)
-        path, note = self._run(job).finish()
+        path, note = self._run_file(job).finish()
         self._runs.pop(job["reservation_id"], None)
         key, register_note = self._register_run(path)
         with self._lock:
@@ -284,7 +277,7 @@ class Mapper(JobDevice):
 
     def _open_run_file(self, job: dict, sample: dict) -> None:
         plan = job["resolved_plan"]
-        run = self._run(job)
+        run = self._run_file(job)
         attrs = {
             "schema_version": ENVELOPE_VERSION,
             "run_id": job["reservation_id"],
@@ -329,7 +322,7 @@ class Mapper(JobDevice):
 
     def _refuse_another_load(self, job: dict, sample: dict) -> None:
         """A resume onto another sample load would put the new load's features at the old load's positions."""
-        recorded = self._run(job).attr("sample_load_id") if not job.get("run_closed") else None
+        recorded = self._run_file(job).attr("sample_load_id") if not job.get("run_closed") else None
         if not recorded:
             return
         if sample.get("sample_load_id") is None:
@@ -339,7 +332,6 @@ class Mapper(JobDevice):
             raise RuntimeError(f"the sample was reloaded since this map started (load {recorded}, now {sample['sample_load_id']}); "
                                "its tiles would not line up: reserve a new map instead of resuming")
 
-    # Steps
     def run_step(self, job: dict, index: int) -> dict:
         step = self.step_at(job, index)
         if step["phase"] == "tiles":
@@ -390,7 +382,7 @@ class Mapper(JobDevice):
             if correction is not None:
                 record["drift"] = correction
             return record
-        run = self._run(job)
+        run = self._run_file(job)
         images = profile.ctx.read_acquisition(image_key)
         if correction is not None:
             correction.update(live_drift.measure(job, tile, images, acquired, run, float(self.max_drift_m_per_s)) or {})
@@ -406,15 +398,15 @@ class Mapper(JobDevice):
 
     def store_spectrum_row(self, job: dict, tile: dict, points: int, row: int, spectra: Any, attrs: dict) -> None:
         """A row of tile's spectrum image, straight into the run file (a profile calls it through its MapContext)."""
-        self._run(job).write_spectrum_image_row(plans.tile_count(job["resolved_plan"]), tile["index"], points, row, spectra, attrs)
+        self._run_file(job).write_spectrum_image_row(plans.tile_count(job["resolved_plan"]), tile["index"], points, row, spectra, attrs)
 
     def store_spectrum_image_key(self, job: dict, tile: dict, key: str) -> None:
         """A tile's spectrum image is a vendor file the run file names."""
-        self._run(job).write_spectrum_image_key(plans.tile_count(job["resolved_plan"]), tile["index"], key)
+        self._run_file(job).write_spectrum_image_key(plans.tile_count(job["resolved_plan"]), tile["index"], key)
 
     def _trace_drift_correction(self, job: dict, ok: bool, arguments: dict, clock_s: float, error: str | None = None) -> None:
         """One live drift correction into the Instrument Trace (Mapper.drift_correction)."""
-        fields = {"job_id": job.get("job_id"), "run_id": job["reservation_id"], "plan_id": job.get("plan_id"), "step": arguments["tile"], "clock_s": clock_s, **self._dry(job)}
+        fields = {"job_id": job.get("job_id"), "run_id": job["reservation_id"], "plan_id": job.get("plan_id"), "step": arguments["tile"], "clock_s": clock_s, **self._trace_fields(job)}
         if error is not None:
             fields["error"] = error
         self._trace.record("Mapper.drift_correction", ok, time.time(), arguments=arguments, **fields)
@@ -432,7 +424,6 @@ class Mapper(JobDevice):
         if job.get("zoom_shift_before") is not None:
             self.profile().set_image_shift(job, job["zoom_shift_before"])
 
-    # Ending
     def on_suspend(self, job: dict, reason: str) -> None:
         self.profile().make_safe(job)  # already safe between tiles, done again so a pause never depends on that
 
@@ -443,7 +434,7 @@ class Mapper(JobDevice):
         live_drift.finish(job, profile)  # the image shift goes back to its value before the map
         if not job.get("run_closed"):
             self._write_trace(job)
-            self._run(job).close()  # a resume opens it again
+            self._run_file(job).close()  # a resume opens it again
 
     def on_finish(self, job: dict) -> dict:
         # A finished map must not leave the beam parked or the tip engaged on the last tile.
@@ -465,7 +456,7 @@ class Mapper(JobDevice):
         try:
             reservation_id = self._parse(request, "reservation_id")["reservation_id"]
             job = self._job(reservation_id)
-            if job is not None and not job.get("run_closed") and "run_path" in job and self._run(job).exists():
+            if job is not None and not job.get("run_closed") and "run_path" in job and self._run_file(job).exists():
                 self._close_run_file(job)
                 run = job["result_keys"].get("run")
                 if run and job["resolved_plan"].get("stitch"):
@@ -501,7 +492,7 @@ class Mapper(JobDevice):
             "grid": {"rows": grid.get("rows"), "cols": grid.get("cols")},
             "box_m": plan.get("box_m"),
             "fov_m": plan.get("fov_m"),
-            **({"run_file": str(self._run(job).path)} if has_run else {}),
+            **({"run_file": str(self._run_file(job).path)} if has_run else {}),
             **pipeline,
         }
         tracked = live_drift.summary(job)

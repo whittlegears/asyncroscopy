@@ -27,6 +27,7 @@ import tango
 from tango import AttrWriteType, DevState
 from tango.server import attribute, device_property
 
+from asyncroscopy.core.names import autoscript_port
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope
 from asyncroscopy.instruments.scanning_beam import unsupported
 from asyncroscopy.data.data_writer import DEFAULT_ACQUISITION_DIR, acquisition_filename, record_vendor_file, save_acquisition
@@ -46,9 +47,7 @@ def _settings(cls, fields: dict, allowed: tuple[str, ...]):
     return cls(**fields)
 
 
-# AutoScript imports — only available on the microscope PC.
-# Wrapped in try/except so the device can still be imported and tested
-# on a development machine without AutoScript installed.
+# AutoScript is installed only on the microscope PC; elsewhere the device still imports for tests.
 try:
     from autoscript_tem_microscope_client import TemMicroscopeClient
     from autoscript_tem_microscope_client.enumerations import EdsDetectorType
@@ -68,6 +67,7 @@ AUTOSCRIPT_STEM_OUTPUT_DIRECTORY = Path(r"Y:\AutoScript TEM")
 # It waits this long at each step for the current to settle.
 SCREEN_CALIBRATION_FOCUS_V = (10.0, 150.0, 15)
 SCREEN_SETTLE_S = 1.0
+screen_calibration_degree = 11
 
 
 NO_HOST = ("the device property hardware_host is not set: give it in the stack YAML (instrument.hardware_host, as configs/Spectra300.yaml does); "
@@ -81,9 +81,6 @@ class AutoScriptMicroscope(ElectronMicroscope):
     dedicated detector devices and read via DeviceProxy at acquisition time.
     """
 
-    # ------------------------------------------------------------------
-    # Device properties — configure in Tango DB per deployment
-    # ------------------------------------------------------------------
     hardware_host = device_property(
         dtype=str,
         default_value="",
@@ -92,12 +89,11 @@ class AutoScriptMicroscope(ElectronMicroscope):
     )
     hardware_port = device_property(
         dtype=int,
-        default_value=9095,
+        default_value=autoscript_port,
         doc="Port of the AutoScript microscope server",
     )
-    # This property is not applied. The AutoScript 1.18 client waits for every reply with no time limit, and neither
-    # perform_call of the autoscript_core ClientEndpoint nor connect offers one to set. A hung AutoScript server
-    # holds the call until it answers or the connection drops. The property stays so configs that set timeout_seconds load.
+    # The AutoScript 1.18 client waits for every reply with no time limit (neither perform_call nor connect takes one),
+    # so a hung server holds the call. The property stays so configs that set it still load.
     hardware_timeout_seconds = device_property(
         dtype=int,
         default_value=120,
@@ -147,16 +143,11 @@ class AutoScriptMicroscope(ElectronMicroscope):
         "about -1 to 1). 0, the default, until first light has measured it: get_stigmator and set_stigmator are refused.",
     )
 
-    # ------------------------------------------------------------------
-    # Attributes
-    # ------------------------------------------------------------------
     camera_length = attribute(
         label="Camera Length",
         dtype=float,
         access=AttrWriteType.READ,
         unit = "m",
-        # min_value= TODO: set these
-        # max_value= TODO: set these
         doc="Current camera length in meters",
     )
 
@@ -165,15 +156,9 @@ class AutoScriptMicroscope(ElectronMicroscope):
         dtype=float,
         access=AttrWriteType.READ,
         unit = "V",
-        # min_value= TODO: set these
-        # max_value= TODO: set these
         doc="Current acceleration voltage in volts",
     )
 
-
-    # ------------------------------------------------------------------
-    # Initialisation
-    # ------------------------------------------------------------------
 
     def _init_device_attributes(self) -> None:
         # The serve function below runs the server without the device lock of Tango, so that blank_beam is never queued
@@ -189,7 +174,6 @@ class AutoScriptMicroscope(ElectronMicroscope):
         self._connect_detector_proxies()
         self.screen_current_calibration = None
         self._measured_beam_current = None  # a dict with pa and at from the last screen current reading, where at is a time.time value
-        # Without a client, report FAULT instead of looking connected.
         if self._connect_error:
             self.set_state(DevState.FAULT)
             self.set_status(f"Not connected to AutoScript: {self._connect_error}")
@@ -239,8 +223,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         return super()._proxy_timeout_ms(name)
 
     def _client(self, what: str):
-        """The AutoScript client; without one (testing mode has none by design) NotConnected, never a silent pass:
-        a blank, valve or beam command that reached no instrument must not read as done."""
+        """The AutoScript client, else NotConnected: a blank, valve or beam command that reached no instrument must not read as done."""
         if self._microscope is None:
             reason = getattr(self, "_connect_error", None) or ("testing mode has no AutoScript client" if getattr(self, "testing_mode_bool", False)
                                                               else "the device has not connected")
@@ -258,9 +241,6 @@ class AutoScriptMicroscope(ElectronMicroscope):
             advice = "Call Connect once; if it fails again, report it to the operator."
         tango.Except.throw_exception("NotConnected", f"Not connected to AutoScript: {reason}. {advice}", f"{command_name}()")
 
-    # ------------------------------------------------------------------
-    # Attribute read methods
-    # ------------------------------------------------------------------
 
     def read_acceleration_voltage(self) -> float:
         """Accelerating voltage in volts."""
@@ -274,9 +254,6 @@ class AutoScriptMicroscope(ElectronMicroscope):
             return float("nan")
         return self._microscope.optics.camera_length.value.calibrated
 
-    # ------------------------------------------------------------------
-    # Internal acquisition helpers
-    # ------------------------------------------------------------------
     def _acquire_scanned_image(
         self,
         imsize: int,
@@ -307,8 +284,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         return save_acquisition(self, data_server, "stem_image", detector_list, adorned, dataset_attrs=attrs, output_format=output_format)
 
     def _frame_attrs(self, imsize: int, dwell_time: float, scan_region: list[float]) -> dict:
-        """What a saved frame records about where and how it was taken (the dose ledger reads it). A stage or field of
-        view that cannot be read is said in "frame_attrs_error", and the frame is then not in the ledger."""
+        """Where and how a saved frame was taken, for the dose ledger; an unreadable stage or field keeps it out of the ledger."""
         try:
             stage = [float(v) for v in self._get_stage()]
             fov = float(self._get_fov())
@@ -336,10 +312,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         frame_combining: int = 1,
         output_format: str = ".h5",
     ) -> str:
-        """
-        Call advanced AutoScript camera acquisition, save the adorned image,
-        and return its DATA/Tiled key.
-        """
+        """Acquire with the advanced AutoScript camera, save the adorned image and return its key."""
         camera_detector = {"flucam": "Flucam", "bm-ceta": "BM-Ceta"}.get(detector.lower(), detector)
         fixed_readout_area = {
             "full": "Full",
@@ -542,7 +515,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         e-stop), is blanked again after it, even when it fails. An acquisition may open the blanker; the save that
         follows must not leave the beam parked on the sample. A beam that was unblanked is otherwise left as it is
         (the caller opened it, and closes it)."""
-        was_blanked = bool(self._microscope.optics.blanker.is_beam_blanked)
+        was_blanked = self._beam_blanked()
         blanks_before = self._blank_count
         try:
             yield
@@ -592,7 +565,6 @@ class AutoScriptMicroscope(ElectronMicroscope):
         original_gun_lens = self._microscope.optics.monochromator.focus
         gun_lens_series = np.linspace(*SCREEN_CALIBRATION_FOCUS_V)
 
-        # series of measurements
         current_series = []
         try:
             for val in gun_lens_series:
@@ -603,8 +575,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
             self._microscope.optics.monochromator.focus = original_gun_lens
         current_series = np.array(current_series) * 1e12
 
-        # fit a polynomial and save it with the span it is valid over
-        coeffs = np.polyfit(gun_lens_series, current_series, 11)
+        coeffs = np.polyfit(gun_lens_series, current_series, screen_calibration_degree)
         self.screen_current_calibration = np.poly1d(coeffs)
         self.screen_current_calibration_range = {
             "focus_v": (float(gun_lens_series.min()), float(gun_lens_series.max())),
@@ -612,11 +583,8 @@ class AutoScriptMicroscope(ElectronMicroscope):
         }
 
     def _screen_current_focus(self, current: float) -> float:
-        """The monochromator focus (V) that gives ``current`` pA, refused unless it lies inside the calibrated span.
-
-        The calibration is a degree-11 polynomial through 15 points: outside the measured focus span its
-        roots are extrapolation, and writing one would be an unbounded write to the gun.
-        """
+        """The monochromator focus (V) that gives ``current`` pA, inside the calibrated span only: outside it the
+        polynomial's roots are extrapolation, and writing one would be an unbounded write to the gun."""
         span = self.screen_current_calibration_range
         low_v, high_v = span["focus_v"]
         low_pa, high_pa = span["current_pa"]
@@ -645,8 +613,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         self._microscope.optics.monochromator.focus = self._screen_current_focus(current)
 
     def _current_conditions(self) -> dict | None:
-        """What sets the beam current, as AutoScript reports it: the monochromator focus, spot size, optical and
-        illumination mode, high tension and the aperture mechanisms. None when any of it cannot be read."""
+        """What sets the beam current, as AutoScript reports it; None when any of it cannot be read."""
         try:
             optics = self._microscope.optics
             conditions = {
@@ -670,8 +637,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
             return None
 
     def _get_screen_current(self) -> float:
-        """get screen current in pA; with the screen inserted it is the beam current, kept for get_parameters
-        together with the optics it was measured under, so a later change to them makes it stale"""
+        """The screen current in pA, kept with the optics it was measured under."""
         screen_current = self._microscope.detectors.screen.measure_current() * 1e12
         if screen_current > 0 and self._microscope.detectors.screen.position == "Inserted":
             self._measured_beam_current = {"pa": float(screen_current), "at": time.time(), "conditions": self._current_conditions()}
@@ -739,8 +705,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
             return {"unavailable": f"{type(exc).__name__}: {str(exc).splitlines()[0][:200] if str(exc) else ''}"}
 
     def _versions(self) -> dict:
-        """The AutoScript server and client versions, whether the server is offline (a simulator), and the
-        microscope's serial number and TEM server version, as AutoScript reports them."""
+        """AutoScript's server and client versions, whether it is offline, and the microscope's serial and TEM server version."""
         service = self._microscope.service
         return {
             "autoscript_server_version": self._read(lambda: str(service.autoscript.server.version)),
@@ -779,7 +744,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
                 'projector_mode': optics.projector_mode,
                 'spot_size': optics.spot_size_index,
                 'beam_stopper': optics.beam_stopper.insertion_state,
-                'beam_blanker': optics.blanker.is_beam_blanked,
+                'beam_blanker': self._beam_blanked(),
                 'auto_beam_blank_mode': self._read(lambda: str(optics.blanker.auto_beam_blank.mode.value)),
                 'is_eftem_on': optics.is_eftem_on,
                 **self._optics_readout(),
@@ -840,7 +805,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         if not self._is_stem():
             raise ValueError("run_stem_auto_focus runs in STEM mode only (AutoScript); nothing was run")
         results = self._microscope.auto_functions.run_stem_auto_focus(_settings(RunStemAutoFocusSettings, fields, STEM_AUTO_FOCUS_FIELDS))
-        return {"defocus_m": float(results.defocus), "astigmatism_m": float(results.astigmatism), "beam_blanked": self._beam_blanked_now()}
+        return {"defocus_m": float(results.defocus), "astigmatism_m": float(results.astigmatism), "beam_blanked": self._beam_blanked()}
 
     def _run_beam_tilt_auto_focus(self, fields: dict) -> dict:
         if self._is_stem():
@@ -848,11 +813,16 @@ class AutoScriptMicroscope(ElectronMicroscope):
         results = self._microscope.auto_functions.run_beam_tilt_auto_focus(_settings(RunBeamTiltAutoFocusSettings, fields, BEAM_TILT_AUTO_FOCUS_FIELDS))
         drift = None if results.drift is None else [float(results.drift.x), float(results.drift.y)]
         return {"defocus_m": float(results.defocus), "astigmatism_m": float(results.astigmatism), "drift_m": drift,
-                "beam_blanked": self._beam_blanked_now()}
+                "beam_blanked": self._beam_blanked()}
 
-    def _beam_blanked_now(self) -> bool:
-        """The blanker as AutoScript reads it now: a vendor routine may leave the beam open, and the reply says so."""
-        return bool(self._microscope.optics.blanker.is_beam_blanked)
+    def _beam_blanked(self) -> bool:
+        """The blanker as AutoScript reads it now (get_parameters, beam_state, and the vendor routines' replies: one
+        may leave the beam open, and the reply says so)."""
+        return bool(self._client("reading the blanker").optics.blanker.is_beam_blanked)
+
+    def _manufacturer_name(self) -> str:
+        """AutoScript TEM is Thermo Fisher Scientific's API and drives only its microscopes."""
+        return "Thermo Fisher Scientific"
 
     def _acquire_camera_series(self, imsize: int, exposure_time: float, detector: str, readout_area: str, frame_combining: int, length: int) -> str:
         camera_detector = {"flucam": "Flucam", "bm-ceta": "BM-Ceta"}.get(detector.lower(), detector)
@@ -978,10 +948,6 @@ class AutoScriptMicroscope(ElectronMicroscope):
             raise ValueError(f"beam tilt must be [x, y], each unitless between -1 and 1 (AutoScript's units), got {list(tilt)}; nothing was set")
         self._microscope.optics.deflectors.beam_tilt = (values[0], values[1])
 
-
-# ----------------------------------------------------------------------
-# Server entry point
-# ----------------------------------------------------------------------
 
 def _without_tango_serialization() -> None:
     """Turn off Tango's per-device command lock in this server, before any device starts: a long acquisition

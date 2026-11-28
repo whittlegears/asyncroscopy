@@ -109,11 +109,6 @@ def _word_list(name: str) -> list[str]:
     return [w for w in re.split(r"[_\W]+", spaced.lower()) if w]
 
 
-def looks_like_stop(command: str) -> bool:
-    """A name with a stop word in it: if it is still high, the author probably meant it as a stop."""
-    return bool(set(_word_list(command)) & (STOP_VERBS | RETREAT_VERBS | {"off", "unload", "park", "estop", "cancel", "shutdown", "close", "blank", "lift", "safe"}))
-
-
 def is_safe_stop(command: str, probe: bool = False) -> bool:
     """Exactly one stop verb and nothing else but what it may stop (see STOP_OBJECTS), or a stop pair.
 

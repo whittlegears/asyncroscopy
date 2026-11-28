@@ -130,7 +130,6 @@ class YamlInstrument(Instrument):
     time_scale = device_property(dtype=float, default_value=1.0, doc="Real seconds per simulated second of every duration_s (0: no waiting; tests and fast rehearsals).")
     hold_lease_s = device_property(dtype=float, default_value=10.0, doc="How long a job's hold lasts without being renewed; a job device that dies stops holding the instrument after this long.")
 
-    # Instrument
     def read_instrument_type(self) -> str:
         return "YAML_SIM"
 
@@ -178,7 +177,6 @@ class YamlInstrument(Instrument):
         self._drop_hold("the device was re-initialised")
         Device.delete_device(self)
 
-    # The file's settings, commands and acquisitions
     def _scaled_sleep(self, seconds: float) -> None:
         if seconds and self._scale:
             time.sleep(seconds * self._scale)
@@ -300,7 +298,6 @@ class YamlInstrument(Instrument):
                 file_attrs={"instrument": type(self).__name__, "description": self.sim.spec.description, **(file_attrs or {})},
             )
 
-    # The step protocol a job device uses to drive this instrument
     @command(dtype_in=str, dtype_out=float, doc_in=":param job_token: Names the job (and is needed for every later step of it).", risk="high", operator_only=True, role="other")
     def hold(self, job_token: str) -> float:
         """Keep every other set_* and acquire* call out for this job, or renew its hold. Returns the lease in seconds; renew within it."""

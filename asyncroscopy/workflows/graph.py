@@ -1,6 +1,6 @@
 """What a workflow module uses to build its LangGraph graph from blocks, and the registry of workflows.
 
-A workflow is a Python module that builds a LangGraph ``StateGraph``. ``graphs/map_grid.py`` is one.
+A workflow is a Python module that builds a LangGraph ``StateGraph``. ``agent/workflows/map_grid.py`` is one.
 
     def build(use: Steps) -> StateGraph:
         graph = StateGraph(WorkflowState)
@@ -33,12 +33,12 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
-import importlib
+import importlib.util
 import inspect
-import json
-import pkgutil
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Annotated, Any, Literal, TypedDict
 
 from langchain_core.runnables import RunnableConfig
@@ -46,6 +46,9 @@ from langgraph.graph import END as GRAPH_END
 from langgraph.graph import START as GRAPH_START
 from langgraph.graph import StateGraph
 from langgraph.types import RetryPolicy
+
+from asyncroscopy import settings
+from asyncroscopy.safety.permissions import canonical_json
 
 from .blocks import Block, BlockContext, BlockFailed, Unreachable, all_blocks
 from .checks import END, START, edges_of, lint
@@ -141,10 +144,12 @@ class Steps:
                 raise BlockFailed(f"node {node}: {exc.args[0]}") from exc
             defaults = {k: v["default"] for k, v in chosen.inputs.items() if "default" in v}
             args = {**defaults, **args}
-            if ctx is not None:
+            if ctx is None:
+                result = await chosen.run(ctx, args, outputs.get(node))
+            else:
                 ctx.step = node
-            result = await chosen.run(ctx, args, outputs.get(node))
-            if ctx is not None:
+                with ctx.journal.node(node):
+                    result = await chosen.run(ctx, args, outputs.get(node))
                 ctx.loop = loop_progress(node, result) or ctx.loop
                 note_tiles(ctx.tiles, result, args)
             missing = sorted(set(chosen.outputs) - set(result or {}))
@@ -258,7 +263,7 @@ class Workflow:
         """
         blueprint = self.blueprint()
         digest = hashlib.sha256(self.source().encode())
-        digest.update(json.dumps(blueprint, sort_keys=True, separators=(",", ":"), default=str).encode())
+        digest.update(canonical_json(blueprint).encode())
         blocks = all_blocks()
         modules = {BlockContext.__module__: inspect.getmodule(BlockContext)}
         for name in sorted({str(n.get("block")) for n in blueprint["nodes"].values()}):
@@ -309,7 +314,8 @@ def recursion_limit(blueprint: dict) -> int:
 
 
 _WORKFLOWS: dict[str, Workflow] = {}
-_loaded = False
+_shipped: set[str] = set()
+_loaded_from: Path | None = None
 
 
 def register_workflow(workflow: Workflow) -> Workflow:
@@ -320,17 +326,29 @@ def register_workflow(workflow: Workflow) -> Workflow:
     return workflow
 
 
-def all_workflows() -> dict[str, Workflow]:
-    """Every registered workflow by name. Shipped ones are loaded from the ``graphs`` package on first use."""
-    global _loaded
-    if not _loaded:
-        from . import graphs
+def _load_file(path: Path):
+    """The module in ``path``, kept in ``sys.modules`` so its source can be read for its hash."""
+    spec = importlib.util.spec_from_file_location(f"agent_workflows.{path.stem}", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
-        for info in pkgutil.iter_modules(graphs.__path__):
-            found = getattr(importlib.import_module(f"{graphs.__name__}.{info.name}"), "WORKFLOW", None)
+
+def all_workflows() -> dict[str, Workflow]:
+    """Every registered workflow by name. Shipped ones are loaded from ``<agent_dir>/workflows/*.py`` on first use,
+    and loaded again when ``agent_dir`` names another folder."""
+    global _loaded_from
+    folder = settings.get().agent_dir / "workflows"
+    if folder != _loaded_from:
+        for name in _shipped:
+            _WORKFLOWS.pop(name, None)
+        _shipped.clear()
+        for path in sorted(folder.glob("*.py")):
+            found = getattr(_load_file(path), "WORKFLOW", None)
             if isinstance(found, Workflow):
-                register_workflow(found)
-        _loaded = True
+                _shipped.add(register_workflow(found).name)
+        _loaded_from = folder
     return dict(_WORKFLOWS)
 
 

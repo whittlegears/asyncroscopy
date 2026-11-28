@@ -10,11 +10,11 @@ import numpy as np
 import pyTEMlib.image_tools as it
 import pyTEMlib.probe_tools as pt
 
-from tango.server import attribute, device_property
+from tango.server import device_property
 
 from asyncroscopy.data.data_writer import save_acquisition
 from asyncroscopy.instruments.electron_microscope.digital_twin_base import ElectronMicroscopeTwin
-from asyncroscopy.instruments.electron_microscope.twin.optics import TARGET_ABERRATIONS_V
+from asyncroscopy.instruments.electron_microscope.twin.optics import target_aberrations
 from asyncroscopy.instruments.electron_microscope.twin.sample_model import SampleParams
 from asyncroscopy.instruments.electron_microscope.twin.specimen import SpecimenContext, ViewRequest
 from asyncroscopy.routines.dose import ELECTRON_CHARGE
@@ -33,19 +33,6 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
                                            doc="Acceleration voltage (V) of the simulated probe: its wavelength. The probe's "
                                                "aberrations are pyTEMlib's Spectra300 target values whatever the voltage.")
 
-    # ------------------------------------------------------------------
-    # Attributes
-    # ------------------------------------------------------------------
-    # not finishded
-    manufacturer = attribute(
-        label="DigitalTwinParticles",
-        dtype=str,
-        doc="Simulation backend",
-    )
-
-    # ------------------------------------------------------------------
-    # Initialisation
-    # ------------------------------------------------------------------
 
     def init_device(self) -> None:
         """Initialize the current digital-twin contract and particle world."""
@@ -68,17 +55,6 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
         return {**super()._ground_truth(), "particle_count": len(self._particle_records)}
 
 
-    # ------------------------------------------------------------------
-    # Attribute read methods
-    # ------------------------------------------------------------------
-
-    def read_manufacturer(self) -> str:
-        return self._manufacturer
-
-
-    # ------------------------------------------------------------------
-    # Internal acquisition helpers
-    # ------------------------------------------------------------------
     def _acquire_scanned_image(
         self,
         imsize: int,
@@ -99,9 +75,8 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
         blur_noise_level = 0.1
         pixel_size       = fov / size
 
-        # ── Probe aberrations (unchanged) ─────────────────────────────────────────
         voltage = float(self.acceleration_voltage)
-        ab = pt.get_target_aberrations("Spectra300", TARGET_ABERRATIONS_V)
+        ab = target_aberrations()
         ab['acceleration_voltage'] = voltage
         ab['FOV']                  = fov / 10   # nm
         ab['convergence_angle']    = 30         # mrad
@@ -109,7 +84,6 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
 
         random = self._specimen.random  # one stream with the sample, so a rebuild and what follows it repeat
 
-        # ── Helper functions (unchanged from original) ────────────────────────────
         def sub_pix_gaussian(size=10, sigma=0.2, dx=0.0, dy=0.0):
             coords = np.arange(size) - (size - 1) / 2.0
             x, y   = np.meshgrid(coords, coords)
@@ -173,7 +147,6 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
         xtal = field.atoms
         self._particle_records = field.records
 
-        # ── Pseudo-potential + PSF convolution (unchanged logic) ──────────────────
         edge     = 2 * edge_crop * pixel_size
         frame    = (0, fov + edge, 0, fov + edge)
 
@@ -191,7 +164,6 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
         image = np.absolute(image)
         image = image[edge_crop:-edge_crop, edge_crop:-edge_crop]
 
-        # ── Noise chain (unchanged) ───────────────────────────────────────────────
         scan_time   = dwell_time * size * size
         counts      = scan_time * (beam_current * 1e-12) / ELECTRON_CHARGE
         noisy_image = self._beam_signal(poisson_noise(image, counts=counts))
@@ -255,7 +227,6 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
         )
 
 
-
     def _set_fov(self, fov) -> None:
         """set field of view in meters"""
         self._fov = float(fov)
@@ -284,9 +255,6 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
         super()._move_stage(position)
         self._read_stage()
 
-# ----------------------------------------------------------------------
-# Server entry point
-# ---------------------------------------------------------------------
 
 if __name__ == "__main__":
     DigitalTwinParticles.run_server()

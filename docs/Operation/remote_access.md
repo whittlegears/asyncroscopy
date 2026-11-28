@@ -36,6 +36,7 @@ mcp:
     #   read:    [instrument:read, instrument:operate, instrument:approve]
     #   operate: [instrument:operate]
     #   approve: [instrument:approve]
+    #   preapprove: [instrument:preapprove]                           # a workflow server's ASYNCROSCOPY_OPERATOR_TOKEN, and nothing else
 ```
 
 Exactly one of `jwks_url` and `public_key_file`; `issuer` and `audience` are required, so a token minted for another instrument or service does not open this one. `run_mcp.py` refuses a config with a missing or unknown key.

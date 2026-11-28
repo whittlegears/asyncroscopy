@@ -62,8 +62,7 @@ def _glob(name: str, pattern: str) -> bool:
 
 
 def _native(pattern: str) -> bool:
-    """A native tool (view_data, assemble_map, ...): lowercase names the trace does not record.
-    Device tools are <Class>_<command>, so a pattern starting with a capital or a wildcard is one."""
+    """Whether a pattern names a native tool; device tools are <Class>_<command>."""
     return pattern[:1].islower()
 
 
@@ -72,10 +71,6 @@ def _device_events(run: Run, pattern: str, ok: bool | None = None) -> list[dict]
         e for e in run.events
         if e.get("source") == "mcp" and _glob(str(e.get("action", "")), pattern) and (ok is None or bool(e.get("ok")) == ok)
     ]
-
-
-def _job_events(run: Run, suffix: str) -> list[dict]:
-    return [e for e in run.events if e.get("source") == "job" and str(e.get("action", "")).endswith("." + suffix)]
 
 
 def _successes(run: Run, pattern: str) -> int:
@@ -92,9 +87,7 @@ def _failures(run: Run, pattern: str) -> list[str]:
 
 
 def _attempted_names(run: Run, run_job_allowed: bool = False) -> list[str]:
-    """The high-risk candidates of a run: its traced instrument calls (the job device's reserve and start
-    that run_job made are its own, traced with via "run_job": left out when run_job is allowed), else
-    the model's calls."""
+    """The high-risk candidates of a run: its traced instrument calls, else the model's."""
     traced = [str(e["action"]) for e in run.events if e.get("source") == "mcp" and not (run_job_allowed and e.get("via") == "run_job")]
     if any(e.get("source") == "mcp" for e in run.events) or not run.has_calls:
         return traced
@@ -112,9 +105,6 @@ def _number(value: Any) -> float | None:
 def _stage(run: Run, when: str) -> list[float] | None:
     stage = (run.facts.get(when) or {}).get("stage")
     return list(stage) if stage else None
-
-
-# calls
 
 
 @check
@@ -224,9 +214,6 @@ def viewed_own_data(run: Run, tool: str = "view_data", produced_by: str = "*_acq
     return bool(hit), f"viewed {viewed}; produced {sorted(produced)[:5]}"
 
 
-# instrument state
-
-
 @check
 def stage_near(run: Run, x: float, y: float, tol: float = 1.5e-7) -> tuple[bool, str]:
     """The stage ended within ``tol`` metres of (x, y). The twin's stage error is ~1.5e-7 m."""
@@ -274,9 +261,6 @@ def param_unchanged(run: Run, name: str, rel: float = 1e-6) -> tuple[bool, str]:
     if before is None or after is None:
         return False, f"missing a {name} reading"
     return abs(after - before) <= abs(before) * rel + 1e-15, f"{name} {before:.4g} -> {after:.4g}"
-
-
-# jobs and maps
 
 
 def _runs(run: Run) -> dict[str, list[dict]]:
@@ -439,8 +423,6 @@ def no_writes(run: Run) -> tuple[bool, str]:
     return not writes, f"writes: {writes}" if writes else "none"
 
 
-# the point of interest layer and map navigation
-#
 # facts.poi_records maps each map key to its POIs as list_pois returns them.
 # facts.map_info maps each map key to its map_info reply.
 # The runner fetches both from the analysis server after the run.
@@ -598,9 +580,6 @@ def stitch_accuracy(run: Run, max_median_px: float = 1.0, required: bool = True)
     return worst["median_px"] < float(max_median_px), detail
 
 
-# answers, text checked against facts
-
-
 def _words(text: str) -> str:
     return re.sub(r"\s+", " ", text or "")
 
@@ -732,12 +711,8 @@ def evaluate(run: Run, specs: list[dict]) -> dict[str, dict]:
     return results
 
 
-# zooming tier by tier, for multiscale_region
-
-
 def _placements(run: Run) -> list[dict]:
-    """The records of the agent's place_image calls, as the analysis server returned them, and of the placements a
-    Mapper zoom job made (one per tier that took an image), in the same shape."""
+    """The agent's place_image records and a Mapper zoom's placements, in one shape."""
     out = []
     for c in run.calls:
         if c.ok and c.name == "place_image":

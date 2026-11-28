@@ -19,8 +19,7 @@ KEPT_STEP_RESULTS = 10_000
 
 
 def _json_default(value):
-    """numpy values stay numbers in replies and state files: np.int64(2) -> 2 and an array (what
-    Tango returns for a list of floats) -> a list, not "2" or "[0.1 0.2]"."""
+    """Keep numpy values numbers in JSON: np.int64(2) is 2 and an array a list."""
     return value.tolist() if hasattr(value, "tolist") else str(value)
 
 
@@ -98,8 +97,7 @@ class JobFiles:
         return read_last_steps(self._steps_path(reservation_id), KEPT_STEP_RESULTS)
 
     def _save(self, job: dict) -> None:
-        """Write the job's small progress record. The plan has its own file (_save_plan), written once, and
-        step results go to an append-only file, so saving after each of thousands of steps rewrites neither."""
+        """Write the job's small progress record; the plan and step results have their own files."""
         path = self._path(job["reservation_id"])
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(self._snapshot(job), default=_json_default), encoding="utf-8")
@@ -114,9 +112,7 @@ class JobFiles:
         tmp.replace(path)
 
     def _snapshot(self, job: dict) -> dict:
-        """A deep copy of the job's progress (without its plan and step results), taken under the lock. Hooks (live
-        drift, the Mapper's pipeline) change parts of the job outside the lock; a copy taken while one does can fail
-        with "changed size during iteration", so it is tried again rather than losing the save."""
+        """A deep copy of the job's progress under the lock, retried when a hook changes it mid-copy."""
         with self._lock:
             for attempt in range(5):
                 try:

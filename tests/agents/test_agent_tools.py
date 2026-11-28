@@ -125,7 +125,7 @@ def test_the_stem_twins_curated_set_is_unchanged(endpoint):
 
     server = endpoint(TWIN, "http://127.0.0.1:8003/mcp")
     assert devices_of_kind(server.discovery.endpoint_info(), "stem") == ["DigitalTwin"]
-    tools = load_profile("default").tools  # the curated lists are the default agent profile's data
+    tools = load_profile("small").tools  # the curated lists are the default agent profile's data
     assert server.discovery.endpoint_info()["agent_tools"] == [*tools.stem, *tools.generic, "load_skill"]
     assert "*_move_stage" in tools.stem and "run_job" in tools.generic
 

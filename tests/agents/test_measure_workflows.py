@@ -169,13 +169,13 @@ def test_a_runs_instrument_calls_carry_the_caller_that_asked_for_it(tmp_path, mo
     instrument, analysis, _ = scope()
     opened = []
 
-    class Endpoints:
-        async def open(self, run_id=None, caller=None):
+    class Endpoints(workflow_server.Endpoints):
+        async def open(self, run_id=None, caller=None, instrument_url=None, run_key=None):
             opened.append(caller)
             return instrument, analysis, {"simulated": True, "stack_id": "tango://twin:1"}
 
     monkeypatch.setattr(workflow_server, "requester", lambda: "wf-find_particle-general-1")
-    served = workflow_server.WorkflowServer(Endpoints(), state_dir=tmp_path / "state")
+    served = workflow_server.WorkflowServer(Endpoints("fake://instrument"), state_dir=tmp_path / "state")
 
     async def go():
         async with Client(served.mcp) as client:

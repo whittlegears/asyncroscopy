@@ -55,9 +55,6 @@ class SPMMicroscope(Instrument):
     is implemented by the concrete vendor subclass.
     """
 
-    # ------------------------------------------------------------------
-    # Sub-device addresses — configure in Tango DB per deployment
-    # ------------------------------------------------------------------
 
     scan_device_address = tango.server.device_property(
         dtype=str,
@@ -94,9 +91,6 @@ class SPMMicroscope(Instrument):
         "No-DB mode: 'tango://127.0.0.1:8888/asyncroscopy/spectroscopy/default#dbase=no'",
     )
 
-    # ------------------------------------------------------------------
-    # Attributes
-    # ------------------------------------------------------------------
 
     spm_mode = tango.server.attribute(
         label="SPM Mode",
@@ -105,9 +99,6 @@ class SPMMicroscope(Instrument):
         doc="Active SPM operating mode.",
     )
 
-    # ------------------------------------------------------------------
-    # Initialization
-    # ------------------------------------------------------------------
 
     def _init_device_attributes(self) -> None:
         self._device_proxies: dict[str, tango.DeviceProxy] = {}
@@ -140,9 +131,6 @@ class SPMMicroscope(Instrument):
         self._device_proxies = {}
         self.info_stream('Disconnected from sub-devices')
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
 
     def _get_proxy(self, name: str) -> tango.DeviceProxy:
         """Return the sub-device proxy or raise a clear DevFailed."""
@@ -165,9 +153,6 @@ class SPMMicroscope(Instrument):
             )
         return proxy
     
-    # ------------------------------------------------------------------
-    # Commands — instrument-global
-    # ------------------------------------------------------------------
 
     @command(dtype_out=str, risk="low", role="setting.read")
     def get_microscope_state(self) -> str:
@@ -192,9 +177,6 @@ class SPMMicroscope(Instrument):
         """Read current meter values (Sum, Deflection, Lateral, Z) as JSON."""
         return json.dumps(self._hw_get_meter_values())
 
-    # ------------------------------------------------------------------
-    # Commands — delegators to sub-devices
-    # ------------------------------------------------------------------
     @command(dtype_out=str, risk="high", role="acquire.other")
     def acquire_scan(self) -> str:
         """Acquire a scan using SCAN device settings; returns a DATA/Tiled uid."""
@@ -261,9 +243,6 @@ class SPMMicroscope(Instrument):
         proxy.move_probe(position)
         return [proxy.probe_x_m, proxy.probe_y_m]
 
-    # ------------------------------------------------------------------
-    # Abstract methods — vendor-specific
-    # ------------------------------------------------------------------
     @abstractmethod
     def _hw_get_spm_mode(self) -> SPMMode:
         """Return the active SPM operating mode."""

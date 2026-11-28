@@ -220,7 +220,6 @@ class TestMCPServerDBMode:
         managed_procs: list[ManagedProcess] = []
 
         try:
-            # Start Tango DB
             with tempfile.TemporaryDirectory(prefix="tango-db-") as db_dir:
                 db_path = Path(db_dir)
                 print(f"[config] tango-db working dir={db_path}")
@@ -236,7 +235,6 @@ class TestMCPServerDBMode:
                     pytest.skip(f"Tango DB could not be started in this environment: {exc}")
                 managed_procs.append(db_proc)
 
-                # Register and start Digital Twin
                 instance = "test_instance"
                 device_name = "asyncroscopy/digitaltwin/default"
                 self.register_digital_twin(host, port, instance, device_name)
@@ -260,7 +258,6 @@ class TestMCPServerDBMode:
                 yield host, port
 
         finally:
-            # Cleanup in reverse order
             for proc in reversed(managed_procs):
                 self.stop_process(proc)
 
@@ -271,7 +268,6 @@ class TestMCPServerDBMode:
         """Test that MCP discovers all Tango device tools."""
         host, port = test_infrastructure
 
-        # Create MCPServer and discover tools
         server = MCPServer(name="MCPServerTest", tango_host=host, tango_port=port, **mcp_kwargs())
 
         server.setup(print_summary=True)
@@ -283,10 +279,8 @@ class TestMCPServerDBMode:
             "list_devices should be auto-registered as an MCP tool"
         )
 
-        # Verify DigitalTwin was discovered
         assert "DigitalTwin" in tools, "DigitalTwin class not found in MCP tool discovery"
 
-        # Verify expected tools exist
         digital_twin_tools = tools["DigitalTwin"]
         expected_tools = {
             "Connect",
@@ -299,7 +293,6 @@ class TestMCPServerDBMode:
                 f"Expected tool {expected_tool} not found"
             )
 
-        # Verify blocked classes are not exposed
         assert "DataBase" not in tools, "DataBase should be blocked"
         assert "DServer" not in tools, "DServer should be blocked"
 
@@ -319,10 +312,8 @@ class TestMCPServerDBMode:
 
         server.setup(print_summary=False)
 
-        # Verify list_devices method exists
         assert hasattr(server, "list_devices"), "list_devices method not found on MCPServer"
 
-        # Call it to verify it works
         deadline = time.monotonic() + 3.0
         has_digital_twin = False
         devices: list[str] = []
@@ -363,7 +354,6 @@ class TestMCPServerDBMode:
         server.setup(print_summary=False)
         tools = server.tools
 
-        # Verify blocked classes are not in tools
         for blocked_class in ["DataBase", "DServer", "DigitalTwin"]:
             assert blocked_class not in tools, f"Blocked class {blocked_class} was exposed"
 
@@ -521,7 +511,6 @@ class TestMCPToolInvocation:
         # Mock Database and DeviceProxy to avoid connection errors
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
 
-        # Mock objects for wrapping
         def mock_func(val):
             return val
 

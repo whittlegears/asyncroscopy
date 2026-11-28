@@ -23,7 +23,6 @@ from asyncroscopy.utils.commands import action_hints_attribute, command
 class SAMPLE(Device):
     """The sample loaded in an instrument: its identity, its load id and its dose ledger."""
 
-    # The MCP server reads each command's risk and role from here.
     action_hints = action_hints_attribute()
 
     sample_file = device_property(dtype=str, default_value="", doc="Where load_sample records the loaded sample, so a restart keeps it; blank: outputs/sample/<device name>_sample.json.")

@@ -28,9 +28,6 @@ SURFACE_REACH_M = 1.0e-6  # the surface controller trusts its model this far fro
 SURFACE_NEIGHBOURS = 10  # and fits its surface to this many of the nearest such places
 
 
-# ----------------------------------------------------------------------------------------------------------------------
-# How each controller focuses
-# ----------------------------------------------------------------------------------------------------------------------
 class FocusOnce:
     def __init__(self) -> None:
         self.focused = False
@@ -75,9 +72,6 @@ class FocusFromSurface:
         microscope.set_defocus(fit[0])  # the surface's value here, where dx and dy are 0
 
 
-# ----------------------------------------------------------------------------------------------------------------------
-# What all the baselines do with the microscope
-# ----------------------------------------------------------------------------------------------------------------------
 @dataclass
 class Notes:
     """What was learnt in each map cell."""

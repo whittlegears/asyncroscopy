@@ -78,7 +78,6 @@ class PlanEnvironment:
     analysis: StitchService | None = None
 
 
-# Field checks and budgets
 def check_plan_fields(plan: dict) -> None:
     """Refuse unknown plan fields by name, with the closest allowed field and the full list, before anything else."""
     allowed = sorted(load("map_plan")["properties"])
@@ -151,7 +150,6 @@ def overlap_warning(overlap: float, tile_m: float, stage_sigma_m: float) -> str 
     )
 
 
-# Resolving
 def resolve(plan: dict, profile: InstrumentProfile, env: PlanEnvironment) -> dict:
     """The plan checked and resolved (see the module docstring); ValueError says what to change."""
     check_plan_fields(plan)
@@ -345,7 +343,6 @@ def _resolve_zoom_only(plan: dict, profile: InstrumentProfile, env: PlanEnvironm
     }
 
 
-# Steps of a resolved plan
 def tile_count(plan: dict) -> int:
     grid = plan["grid"]
     return grid["rows"] * grid["cols"]

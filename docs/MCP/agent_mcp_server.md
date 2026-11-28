@@ -5,7 +5,7 @@ The agent MCP server exposes the LLM agent swarm as MCP tools. It is how clients
 `asyncroscopy/agents/graphs/swarm.py` holds the swarm, beside the other agent graphs, and
 `asyncroscopy/mcp/agent_mcp_server.py` wraps it in FastMCP. The server imports the agent layer only
 when it starts, so the `mcp` package itself never depends on `agents`.
-The default model comes from the agent profile (`asyncroscopy/agents/profiles/default.yaml`).
+The default model comes from the agent profile (`asyncroscopy/agents/profiles/capable.yaml`, gemma4:31b).
 `query_agent`'s `graph` argument is an enum of the graphs (`""` for the swarm, `mapping`, `general`,
 `team`), so clients can list them from the tool's input schema.
 
@@ -58,7 +58,7 @@ agent:
       tools: ["list_devices"]
 ```
 
-Workflows (`asyncroscopy/workflows`, for example the `map_grid` map) run in the agent's own process, and only there; `workflows: false` (under `agent:`, or `--no-workflows`) switches them off: `list_workflows`, `run_workflow`, `workflow_status`, `stop_workflow` and the rest are offered by this server and to the swarm's agents (give an agent `tools: ["*workflow*"]`). A map then needs three processes: the instrument's MCP endpoint, this agent server, and the pyTEMlib MCP server that stitches (`startup_scripts/run_pytemlib.py`). Workflows drive the first of `mcp_urls`. `workflows_hardware: true` also runs them on a stack that is not simulated; it needs `http_host: 127.0.0.1`, because this server has no login.
+Workflows (`asyncroscopy/workflows`, for example the `map_grid` map) run in the agent's own process, and only there; `workflows: false` (under `agent:`, or `--no-workflows`) switches them off: `list_workflows`, `run_workflow`, `workflow_status`, `stop_workflow` and the rest are offered by this server and to the swarm's agents (give an agent `tools: ["*workflow*"]`). A map then needs three processes: the instrument's MCP endpoint, this agent server, and the pyTEMlib MCP server that stitches (`startup_scripts/run_pytemlib.py`). Workflows drive the first of `mcp_urls`, or another instrument endpoint listed in `workflow_instruments` (under `agent:`, or `--workflow-instruments-json`) when `run_workflow` names it as `instrument_url`; no other URL is accepted ([Twin to instrument](twin_to_instrument.md)). `workflows_hardware: true` also runs them on a stack that is not simulated; it needs `http_host: 127.0.0.1`, because this server has no login.
 
 A person reviews, approves and rejects workflows through a second, separate endpoint of this module, the workflow
 operator endpoint (`agent.endpoint_role: operator`, `configs/workflow_operator.yaml`, port 8004). It has no swarm and

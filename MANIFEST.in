@@ -1,0 +1,2 @@
+graft agent
+global-exclude __pycache__ *.pyc

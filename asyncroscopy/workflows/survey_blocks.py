@@ -36,11 +36,7 @@ def _level(size: float, fov: float, overlap: float, max_shift: float, per_side: 
 
 
 def _tile(level: dict, centre: list[float], index: int) -> tuple[int, list[float], list[float]]:
-    """Where tile ``index`` of a level is.
-
-    Returns its field's number, the field's stage [x, y] and the tile's offset from that. Fields are visited in
-    snake order and so are the tiles inside each, so most tiles overlap the one before.
-    """
+    """(field number, field stage [x, y], tile offset) of tile ``index``; fields and tiles go in snake order."""
     fields, in_field, step = int(level["fields_per_side"]), int(level["tiles_per_field_side"]), float(level["step_m"])
     field, tile = divmod(index, in_field * in_field)
     field_row, field_col = divmod(field, fields)

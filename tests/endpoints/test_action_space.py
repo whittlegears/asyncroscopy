@@ -79,7 +79,6 @@ def test_the_sample_device_shows_as_the_state_and_tool_the_gui_needs(serve):
     assert "SAMPLE_load_sample" not in by_tool(action_space.build(serve("asyncroscopy/sample/mapping")))
 
 
-# the document
 def test_stem_and_afm_name_the_stage_move_differently_and_share_its_role(serve):
     stem = action_space.build(serve("asyncroscopy/digitaltwin/default"))
     afm = action_space.build(serve("asyncroscopy/afm/default"))
@@ -163,7 +162,6 @@ def test_table_and_json_from_the_command_line(serve, monkeypatch, capsys):
     assert json.loads(capsys.readouterr().out)["schema_version"] == action_space.SCHEMA_VERSION
 
 
-# the controller
 @pytest.mark.parametrize("device,expected", [
     ("asyncroscopy/digitaltwin/default", ["DigitalTwin_move_stage", "DigitalTwin_unblank_beam", "DigitalTwin_acquire_scanned_image", "DigitalTwin_blank_beam"]),
     ("asyncroscopy/afm/default", ["AFMTwin_retract_tip", "AFMTwin_move_xy", "AFMTwin_approach_tip", "AFMTwin_acquire_topography"]),
@@ -191,7 +189,6 @@ def test_one_role_controller_moves_acquires_and_reads_back_on_both_twins(serve, 
     assert {role for role, _tool in report["calls"]} <= set(ROLES)
 
 
-# roles and the YAML role key
 @pytest.mark.parametrize("command,role", [
     ("move_stage", "stage.move"), ("move_xy", "stage.move"), ("get_stage", "stage.read"), ("approach_tip", "probe.approach"),
     ("retract_tip", "probe.retract"), ("laser_off", "beam.blank"), ("xray_off", "beam.blank"), ("blank_beam", "beam.blank"),

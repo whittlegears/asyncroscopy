@@ -7,7 +7,6 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -19,12 +18,12 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from asyncroscopy.core.names import endpoint_urls  # noqa: E402
-from asyncroscopy.mcp.endpoint_auth import AuthSettings, is_loopback, remote_without_auth  # noqa: E402
-from asyncroscopy.safety.permissions import default_approval_ttl_s  # noqa: E402
-from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, listening_pids, python_command, stop_on_termination  # noqa: E402
-from startup_scripts.config_schema import ConfigError, Setting, fill_placeholders, read_settings  # noqa: E402
-from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers  # noqa: E402
+from asyncroscopy.core.names import endpoint_urls
+from asyncroscopy.mcp.endpoint_auth import AuthSettings, is_loopback, remote_without_auth
+from asyncroscopy.safety.permissions import default_approval_ttl_s
+from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, listening_pids, python_command, stop_on_termination
+from startup_scripts.config_schema import ConfigError, Setting, fill_placeholders, read_settings
+from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers, wait_for_exit
 
 # The config the GUI opens first. The launcher itself needs --yaml: it never picks an instrument for you.
 DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'mcp.yaml'
@@ -65,8 +64,8 @@ SETTINGS = [
     Setting('mcp.include_only_functions', 'list', [], section='Access control', help='Blank: every non-blocked command.'),
     Setting('mcp.needs_approval', 'yaml', {}, section='Access control', label='Needs approval'),
 ]
-# Lines mcp_server.py prints once tools are registered, or when it cannot start.
 OPERATOR_HOST = '127.0.0.1'
+# Lines mcp_server.py prints once tools are registered, or when it cannot start.
 STATUS_PATTERNS = [
     (re.compile(r'MCP ready: (\d+) tool'), '{0} tools', False),
     (re.compile(r'MCP ERROR: .*in use'), 'port in use', True),
@@ -163,6 +162,14 @@ def _operator_port(mcp: dict, path) -> int | None:
     return port
 
 
+def _beside_config(path: Path, value) -> str:
+    """A path a config names, relative to the config's own directory, so endpoints started from anywhere agree."""
+    if not value:
+        return ''
+    named = Path(str(value)).expanduser()
+    return str(named if named.is_absolute() else (path.resolve().parent / named).resolve())
+
+
 def load_config(path: Path) -> Config:
     if not path.exists():
         raise FileNotFoundError(f'Config file not found: {path}')
@@ -205,7 +212,7 @@ def load_config(path: Path) -> Config:
             trace_follow=_module_list(mcp.get('trace_follow'), 'mcp.trace_follow'),
             data_views=_module_list(mcp.get('data_views'), 'mcp.data_views'),
             urls=endpoint_urls(mcp.get('urls'), f'{path}: mcp.urls'),
-            permissions_file=str(mcp.get('permissions_file') or ''),
+            permissions_file=_beside_config(path, mcp.get('permissions_file')),
             approval_ttl_s=float(mcp.get('approval_ttl_s') or default_approval_ttl_s),
             job_limits={str(k): float(v) for k, v in (mcp.get('job_limits') or {}).items() if v not in (None, '')},
             allow_remote_bind=mcp.get('allow_remote_bind') is True,
@@ -388,15 +395,7 @@ def main(argv: list[str] | None = None) -> int:
             start_operator(manager, operator_config(config), env)
             print("MCP server started. Press Ctrl+C to terminate.")
             
-            # Loop with a timeout so Python catches SIGINT (Ctrl+C) on Windows
-            while managed.running:
-                try:
-                    managed.process.wait(timeout=0.1)
-                except subprocess.TimeoutExpired:
-                    pass
-            # The server stopped on its own, from a taken port, unreachable Tango or a crash. Fail so a
-            # supervisor such as systemd or Kubernetes sees it. Its own output went straight to this stdout/stderr.
-            code = managed.process.returncode
+            code = wait_for_exit(managed)
             print(f'MCP server {config.mcp.name} exited with code {code}', file=sys.stderr)
             return code or 1
 

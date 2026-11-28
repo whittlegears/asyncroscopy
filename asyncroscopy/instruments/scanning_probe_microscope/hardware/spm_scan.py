@@ -14,7 +14,6 @@ from abc import abstractmethod
 
 import tango #type: ignore
 
-#from asyncroscopy.data.data_writer import save_acquisition
 from asyncroscopy.instruments.instrument import CombinedMeta
 from asyncroscopy.utils.commands import action_hints_attribute, command
 
@@ -30,12 +29,8 @@ _PARAM_DEFAULTS = {
 class SPM_SCAN(tango.server.Device, metaclass=CombinedMeta):
     """Abstract SPM scan device: frame settings + scan execution."""
 
-    # The risk, role and stop of each command, as its @command declares them. The MCP server reads this.
     action_hints = action_hints_attribute()
 
-    # ------------------------------------------------------------------
-    # Device properties
-    # ------------------------------------------------------------------
 
     data_device_address = tango.server.device_property(
         dtype=str,
@@ -44,9 +39,6 @@ class SPM_SCAN(tango.server.Device, metaclass=CombinedMeta):
             "e.g. 'asyncroscopy/data/default'.",
     )
 
-    # ------------------------------------------------------------------
-    # Attributes
-    # ------------------------------------------------------------------
 
     x_scan_center_m = tango.server.attribute(
         label="Scan Center X",
@@ -119,9 +111,6 @@ class SPM_SCAN(tango.server.Device, metaclass=CombinedMeta):
         doc="Current probe Y position in meters.",
     )
 
-    # ------------------------------------------------------------------
-    # Initialization
-    # ------------------------------------------------------------------
 
     def init_device(self) -> None:
         tango.server.Device.init_device(self)
@@ -141,9 +130,6 @@ class SPM_SCAN(tango.server.Device, metaclass=CombinedMeta):
         self._set_state_and_status(tango.DevState.ON, "Idle.")
         self.info_stream("SPM SCAN device initialised")
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
 
     def _set_state_and_status(self, state, status: str) -> None:
         """Set State and Status together.
@@ -210,7 +196,6 @@ class SPM_SCAN(tango.server.Device, metaclass=CombinedMeta):
         finally:
             self._set_state_and_status(tango.DevState.ON, "Idle.")
 
-    #NB placeholder for now; once DATA is wired up, this will register the scan file and return a unique key.
     def _save_scan(self, path: str) -> str:
         """Hand a finished scan file to DATA/Tiled and return its key.
 
@@ -226,9 +211,6 @@ class SPM_SCAN(tango.server.Device, metaclass=CombinedMeta):
         """
         return path
 
-    # ------------------------------------------------------------------
-    # Attribute read / write, writes pushed to hardware
-    # ------------------------------------------------------------------
 
     def read_x_scan_center_m(self) -> float:
         return self._x_scan_center_m
@@ -281,11 +263,6 @@ class SPM_SCAN(tango.server.Device, metaclass=CombinedMeta):
         self._move_probe(x, value)
 
     
-
-    # ------------------------------------------------------------------
-    # Commands
-    # ------------------------------------------------------------------
-
     @command(dtype_out=str, risk="high", role="acquire.other")
     def acquire_scan(self) -> str:
         """Acquire one frame with current settings; returns a DATA/Tiled key."""
@@ -320,9 +297,6 @@ class SPM_SCAN(tango.server.Device, metaclass=CombinedMeta):
             raise ValueError("position must contain exactly two values: [x, y]")
         self._move_probe(float(position[0]), float(position[1]))
 
-    # ------------------------------------------------------------------
-    # Abstract methods — vendor-specific
-    # ------------------------------------------------------------------
 
     @abstractmethod
     def _hw_read_scan_params(self) -> dict:
@@ -354,8 +328,5 @@ class SPM_SCAN(tango.server.Device, metaclass=CombinedMeta):
         """Move the probe to (x, y) in meters; return when done."""
         pass
 
-# ----------------------------------------------------------------------
-# Server entry point
-# ----------------------------------------------------------------------
 if __name__ == "__main__":
     SPM_SCAN.run_server()

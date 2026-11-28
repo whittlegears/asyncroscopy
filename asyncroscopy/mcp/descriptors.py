@@ -47,7 +47,12 @@ NATIVE: dict[str, tuple[str, str, bool, bool]] = {
     "get_permissions": ("setting.read", "low", False, False),
     "set_permission": ("setting.set", "high", True, False),
     "set_group_permission": ("setting.set", "high", True, False),
+    "preapprove_run": ("other", "high", True, False),
+    "end_run_preapproval": ("other", "low", True, False),
 }
+# The operator endpoint's permission tools: the person's console, so a token needs the approve role for each.
+person_only_natives = frozenset({"list_pending_approvals", "approve_call", "deny_call", "get_permissions", "set_permission",
+                                 "set_group_permission", "preapprove_run", "end_run_preapproval"})
 # Envelope verbs that only read a job.
 JOB_READS = frozenset({"job_status", "results"})
 
@@ -93,6 +98,7 @@ class DeviceInfo:
     job_kind: str | None = None
     plan_example: str | None = None
     in_types: dict[str, Any] = field(default_factory=dict)  # Tango input type of each command
+    commands: set[str] = field(default_factory=set)
     hints: dict[str, dict] = field(default_factory=dict)  # action_hints entry of each command
     hints_unreadable: bool = False  # it has action_hints that could not be read: agents get only State and Status
 
@@ -209,7 +215,7 @@ def describe_native(name: str) -> ToolDescriptor:
     """The descriptor of a native tool (one the server itself offers): low and observing unless NATIVE says otherwise."""
     role, risk, acts, job_start = NATIVE.get(name, ("other", "low", False, False))
     return ToolDescriptor(name=name, device=None, command=None, native=True, action_role=role, risk=risk, acts=acts,
-                          operator_only=False, role_source="rule" if role != "other" else "default", risk_source="native",
+                          operator_only=name in person_only_natives, role_source="rule" if role != "other" else "default", risk_source="native",
                           job_start=job_start)
 
 

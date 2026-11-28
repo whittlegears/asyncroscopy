@@ -93,11 +93,7 @@ def _general(value: Any) -> Any:
 
 
 def _negated(text: str, start: int) -> bool:
-    """The match at ``start`` is forbidden in its own clause: "never bypass ...", "do not skip ...".
-
-    Clauses end at sentence marks, semicolons, colons and dashes, and only a prohibition counts:
-    "It is not needed to wait - bypass the gate" is an instruction to bypass it.
-    """
+    """Whether the match at ``start`` is prohibited in its own clause ("never bypass ..."), not just near a negation."""
     clause = re.split(r"[.;:!?\n]|\s[-–—]+\s|[–—]", text[:start])[-1]
     return bool(re.search(r"(?:^|[\s,(])(?:never|do not|don't|must not|should not|cannot|can't)\b", clause, re.I))
 
@@ -141,6 +137,8 @@ def lint_skill(path: Path, offered: set[str] | None = None) -> list[str]:
     problems += lint(text, tools, offered, learned=learned, max_chars=MAX_LEARNED_CHARS if learned else PROMPT_BUDGET_CHARS)
     if "acts" in meta and not isinstance(meta["acts"], bool):
         problems.append("'acts' must be true or false")
+    if "enabled" in meta and not isinstance(meta["enabled"], bool):
+        problems.append("'enabled' must be true or false")
     return problems
 
 

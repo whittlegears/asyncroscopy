@@ -66,7 +66,6 @@ class Pipeline:
         self._warn = warn
         self._service: StitchService | None = None
 
-    # calls
     def service(self) -> StitchService:
         """The stitching backend, built the first time it is needed."""
         if self._service is None:
@@ -95,15 +94,13 @@ class Pipeline:
             raise AnalysisUnreachable(f"the analysis server at {self.url}: {type(exc).__name__}: {exc}") from exc
 
     def _wait_options(self, job: dict, slot: str) -> dict:
-        """How a shared stitch or score runs for this job: it resumes the analysis job saved in ``slot``, saves the id of a
-        new one there before waiting, and stops when this job aborts."""
+        """How a shared stitch or score runs for this job: resumed from ``slot``, stopped when the job aborts."""
         def keep(job_id: str) -> None:
             with self._lock:
                 self.state(job)[slot] = job_id
                 self._save(job)
         return {"job_id": self.state(job).get(slot), "on_started": keep, "stopping": lambda: self._aborting(job), "warn": self._warn}
 
-    # phases
     def stitch(self, job: dict, run: str, tiles: int) -> dict | None:
         pipeline = self.state(job)
         arguments = self.stitch_arguments(job, run)

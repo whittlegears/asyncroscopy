@@ -20,9 +20,6 @@ from asyncroscopy.mcp.interceptors import Call
 INPUTS = {"size_m": 5.0e-7, "fov_m": 3.0e-7}  # a 2 x 2 grid
 
 
-# the endpoint's queue
-
-
 def queue_at(now: list[float], **kwargs) -> TurnQueue:
     return TurnQueue(clock=lambda: now[0], **kwargs)
 
@@ -90,9 +87,6 @@ def test_only_the_holder_may_act_while_reads_and_stops_always_pass():
     assert guard.before_call(call("someone-else")) is None
 
 
-# which nodes still act
-
-
 def test_a_map_has_no_acting_block_left_once_it_is_back_home():
     blocks = all_blocks()
     grid = get_workflow("map_grid").blueprint()  # plan -> tile (loop) -> home -> run -> stitch
@@ -103,9 +97,6 @@ def test_a_map_has_no_acting_block_left_once_it_is_back_home():
     sample = get_workflow("map_sample").blueprint()  # its stitch is inside the loop that takes more tiles
     assert acting_ahead(sample, blocks, "stitch")
     assert acting_ahead({"nodes": {"x": {"block": "no_such_block"}}, "edges": []}, blocks, "x")  # unknown: taken to act
-
-
-# workflow runs
 
 
 class Endpoint:

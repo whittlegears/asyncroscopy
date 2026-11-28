@@ -33,7 +33,6 @@ class NanoIndenter(Instrument):
     def _disconnect(self) -> None:
         self._retract()
 
-    # Commands, which are the agent's tools
     @command(dtype_out=str, risk="low", role="setting.read")
     def get_limits(self) -> str:
         """JSON with the stage travel (travel_m, from the origin in each direction) and the largest load (max_load_n)."""
@@ -65,7 +64,6 @@ class NanoIndenter(Instrument):
         """Lift the tip off the sample. Always safe."""
         self._retract()
 
-    # What a backend implements
     @abstractmethod
     def _get_position(self) -> list[float]:
         """The stage position [x, y] in metres."""

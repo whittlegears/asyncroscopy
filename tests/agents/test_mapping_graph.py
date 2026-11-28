@@ -21,12 +21,15 @@ class FakeInstrument:
         self.calls = []
         self.refuse_start = refuse_start
         self.status_polls = 0
+        self.device_kinds = {"DigitalTwin": ["stage", "stem"], "Mapper": ["envelope", "map"]}
 
     async def list_tools(self):
         return [SimpleNamespace(name=n) for n in ("DigitalTwin_move_stage", "DigitalTwin_acquire_scanned_image", "DigitalTwin_get_parameters", "Mapper_reserve")]
 
     async def call(self, name, arguments=None):
         self.calls.append(name)
+        if name == "endpoint_info":
+            return reply({"device_kinds": self.device_kinds})
         if name == "DigitalTwin_get_parameters":
             return reply({"stage_position": [0, 0, 0, 0, 0], "fov_m": 2e-7, "world_bounds_angstrom": {"x_min": -5000, "x_max": 5000, "y_min": -5000, "y_max": 5000}})
         if name == "Mapper_reserve":
@@ -305,20 +308,14 @@ def test_a_prose_reply_still_maps_what_the_request_states(monkeypatch):
 def test_the_mapper_prefix_is_discovered():
     g = make()
 
-    async def tools():
-        return [SimpleNamespace(name=n) for n in ("Mapper_lab2_reserve", "Mapper_lab2_start", "DigitalTwin_move_stage")]
-
-    g.instrument.list_tools = tools
+    g.instrument.device_kinds = {"DigitalTwin": ["stage", "stem"], "Mapper_lab2": ["envelope", "map"]}
     assert asyncio.run(g._mapper()) == "Mapper_lab2"
 
 
 def test_several_mappers_need_a_choice(monkeypatch):
     g = make()
 
-    async def tools():
-        return [SimpleNamespace(name=n) for n in ("Mapper_a_reserve", "Mapper_b_reserve")]
-
-    g.instrument.list_tools = tools
+    g.instrument.device_kinds = {"Mapper_a": ["envelope", "map"], "Mapper_b": ["envelope", "map"]}
     with pytest.raises(RuntimeError, match="several Mappers"):
         asyncio.run(g._mapper())
     monkeypatch.setenv("ASYNCROSCOPY_MAPPER", "Mapper_b")

@@ -75,7 +75,6 @@ def kinds(claims):
     return [c.kind for c in claims]
 
 
-# benchmark failures
 def test_focus_series_setting_claimed_back_to_zero_but_last_set_was_plus_20():
     claims = check_answer(focus_series(), FOCUS_ANSWER, TOOLS)
     assert kinds(claims) == ["setting"]
@@ -119,7 +118,6 @@ def test_a_requested_value_never_acquired_is_to_be_acquired_not_dropped():
     assert kinds(claims) == ["acquired_at"] and "request" not in claims[0].why and "to make it true" in claims[0].why
 
 
-# no false alarms
 def test_correct_answers_are_not_flagged():
     assert check_answer(focus_series(last_defocus=0.0), FOCUS_ANSWER.replace("+20 nm", "0 nm"), TOOLS) == []
     answer = f"I set the defocus to -20 nm, took the images {IMAGES[0]} and {IMAGES[1]}, and the defocus is now 0 nm."
@@ -157,7 +155,6 @@ def test_actions_with_no_call_of_their_kind_are_flagged():
     assert check_answer(run.messages, "I moved to the best region and took an image there.", TOOLS) == []
 
 
-# the middleware
 class Request:
     def __init__(self, messages, tools=(), system_message=None):
         self.messages, self.state, self.tools, self.system_message = messages, {"messages": messages}, list(tools), system_message
@@ -257,7 +254,6 @@ def test_the_correction_is_not_taken_for_the_users_request():
     # Loop detection still sees the rounds before the correction as this request's.
     looped = Calls("Read it.").call("view_data", {"key": "a.h5"}, "same").call("view_data", {"key": "a.h5"}, "same").messages
     assert repeats([*looped, HumanMessage("check", name=CLAIM_CHECK)]) == 1
-
 
 
 def test_describing_existing_data_as_acquired_is_not_a_claim_of_acquiring():
@@ -400,7 +396,6 @@ def test_an_answer_that_promises_to_adjust_and_retry_is_unfinished():
     assert kinds(check_answer(run.messages, answer)) == ["unfinished"]
 
 
-
 def test_a_plain_map_job_does_not_excuse_a_higher_magnification_claim_but_a_revisit_does():
     plain = Calls("Map and zoom.").call("run_job", {"device": "Mapper", "plan": {"size_m": [6e-7, 6e-7], "fov_m": 2e-7}}, {"job_id": "a1b2c3d4e5f6", "state": "done"})
     answer = f"I mapped the area and took a higher-magnification image: `{IMAGES[0]}`."
@@ -410,11 +405,9 @@ def test_a_plain_map_job_does_not_excuse_a_higher_magnification_claim_but_a_revi
     assert check_answer(revisit.messages, answer) == []
 
 
-
 def test_a_wrong_final_setting_is_corrected_with_the_exact_call_that_makes_it_true():
     claims = check_answer(focus_series(), FOCUS_ANSWER, TOOLS)
     assert kinds(claims) == ["setting"] and 'call DigitalTwin_set_defocus with {"defocus": 0.0} now' in claims[0].why
-
 
 
 def test_an_answer_that_ends_promising_a_call_is_unfinished():

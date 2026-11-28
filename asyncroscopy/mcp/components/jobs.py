@@ -62,7 +62,6 @@ class Jobs:
         self._device_locks_lock = threading.Lock()
         self._via = threading.local()  # set while run_job calls a job device, so the trace says so
 
-    # plumbing
     def natives(self) -> list:
         if not self.devices():
             return []
@@ -106,7 +105,6 @@ class Jobs:
                                      caller="run_job", run=self.server.run_id() or None, result=note)
         return note
 
-    # job limits
     def limit_reservation(self, device: str, reply: Any) -> Any:
         """A reserve reply, refused (and the reservation released) when its estimate is over mcp.job_limits.
 
@@ -180,7 +178,6 @@ class Jobs:
                 + (f" ({reason})" if reason else "") + ", so max_dose_e_per_a2 cannot be checked: measure the screen current, then reserve again")})
         return found
 
-    # run_job
     @tool()
     def run_job(self, device: str, plan: dict[str, Any] | None = None, resume: str | None = None, wait: bool = True) -> dict[str, Any]:
         """Run a job on a job device in one call: the plan is checked (a refused plan comes back with the reason and an example), the job starts, and the call waits up to 15 s. device: the job device's tool prefix, e.g. "Mapper". Every reply has the estimate. If the reply's state is done it already carries the results (result_keys, summary); otherwise call wait_for_job with its job_id until it is done. A plan over this endpoint's limits is refused: tell the user the estimate and ask. To continue a job that was aborted, pass resume=<its reservation_id> and no plan: it goes on from the next step. wait=false returns as soon as the job runs (when the user wants the job id now, or to stop it later)."""
@@ -242,7 +239,6 @@ class Jobs:
             return f"{device} reservation {summary['reservation_id']} is kept, so the job can still be resumed"
         return self.release(device, summary["reservation_id"])
 
-    # wait_for_job
     @tool()
     def wait_for_job(self, job_id: str, device: str | None = None, max_wait_s: float = JOB_WAIT_MAX_S) -> dict[str, Any]:
         """Wait for any background job (a map from run_job, or assemble_map / score_map on the analysis server) to finish, at most max_wait_s (25 s) per call, and return its state. When it is done the reply also has its results (result_keys, summary). device (e.g. "Mapper") is optional. Call again while the state is still active."""
@@ -331,7 +327,6 @@ class Jobs:
         return status
 
 
-# interceptors of job devices
 def resume_with(device: str, reply: Any) -> Any:
     """An aborted (or aborting) job's reply names the call that continues it (models asked to resume started a
     new job instead); while aborting, that call is for once wait_for_job says aborted."""

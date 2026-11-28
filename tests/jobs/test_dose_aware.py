@@ -79,7 +79,6 @@ def test_twin_dose_map_matches_the_plan_estimate_with_eds(dose_mapper_proxy, dos
     assert abs(delivered - frames_only) / delivered > 0.05  # without EDS the estimate would miss
 
 
-# AutoScript measured current and the screen current check
 @pytest.fixture
 def autoscript(tmp_path, monkeypatch):
     monkeypatch.setattr(auto_script_module, "SCREEN_SETTLE_S", 0.0)
@@ -125,7 +124,6 @@ def test_fake_refuses_an_out_of_range_screen_current_root(autoscript):
         client.optics.monochromator.focus = 1e3
 
 
-# A dose budget needs a measured current unless the stack is simulated
 class RecordingMicroscope:
     def __init__(self, parameters=None, device=None):
         self.calls: list[str] = []

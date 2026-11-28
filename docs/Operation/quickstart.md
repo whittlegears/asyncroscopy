@@ -25,10 +25,10 @@ $uv = (Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\astral-sh.uv_*
 
 and write `& $uv` wherever this guide says `uv` (for example `& $uv sync --extra agent --extra ollama`). The launchers find uv on their own when you start them this way: `uv run` tells its child processes where uv is.
 
-Then pull a model. `qwen3:8b` is the tested default (5 GB; runs partly on CPU on a 6 GB GPU); `qwen3:4b` (2.5 GB) works on smaller machines:
+Then pull a model. `gemma4:31b` is the default (the `capable` profile; it needs a large GPU). On a laptop-class GPU use `qwen3:8b` (5 GB; runs partly on CPU on a 6 GB GPU) with `ASYNCROSCOPY_AGENT_PROFILE=small`, or `qwen3:4b` (2.5 GB) on smaller machines:
 
 ```bash
-ollama pull qwen3:8b
+ollama pull gemma4:31b      # or: ollama pull qwen3:8b
 ```
 
 ## 2. Get the code and its dependencies
@@ -145,7 +145,7 @@ uv run python -m asyncroscopy.agents.run mapping "Map a 600 nm square around the
 uv run python -m asyncroscopy.agents.run general "Map a 600 nm square around the current position and find the 3 most interesting regions"
 ```
 
-Choose the model with `ASYNCROSCOPY_MODEL` (default `gemma4:31b`, from the `capable` agent profile). On a machine with less GPU memory use the small-model profile: `ASYNCROSCOPY_AGENT_PROFILE=default` (`qwen3:8b`), or `qwen3:4b` with it. Ollama on another machine (a GPU box, or Windows from WSL without mirrored networking): set `OLLAMA_HOST=http://<host>:11434`. All settings are listed in `asyncroscopy/agents/__init__.py`.
+Choose the model with `ASYNCROSCOPY_MODEL` (default `gemma4:31b`, from the `capable` agent profile). On a machine with less GPU memory use the small-model profile: `ASYNCROSCOPY_AGENT_PROFILE=small` (`qwen3:8b`), or `qwen3:4b` with it. Ollama on another machine (a GPU box, or Windows from WSL without mirrored networking): set `OLLAMA_HOST=http://<host>:11434`. All settings are listed in `asyncroscopy/agents/__init__.py`.
 
 The command prints a progress line as each step finishes (`[mapping   40s] wait: done`), then the final answer. Expect about two minutes for the mapping request: the twin's mapping config runs in simulated real time (`time_scale: 1`), so 25 tiles with EDS take as long as they would on the instrument. On a 6 GB laptop GPU, with qwen3:8b, the `mapping` graph completed 29 of 30 trial runs, then 9 of 9 on the final code; the `general` agent, which makes every call itself, completed 30 of 30, then 15 of 15 on the final code.
 

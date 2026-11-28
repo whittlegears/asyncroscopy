@@ -25,11 +25,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
 import importlib
 import inspect
 import json
+import os
 import re
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -42,6 +43,7 @@ import yaml
 from _common import (
     endpoint_risks,
     find_tool,
+    git_head,
     is_infra_error,
     read_trace,
     unique_caller,
@@ -49,13 +51,20 @@ from _common import (
 )
 from board import HISTORY, KINDS, parse_bar, previous_run, save_history
 from board import report as board_report
+import workflow_checks
 from workflow_checks import CHECKS, Call, Run, evaluate, unrequested, workflow_allow
 
 from asyncroscopy import settings
 from asyncroscopy.agents.goals import MAP_KEY, trace_from_messages
 from asyncroscopy.agents.profile import load_profile
 from asyncroscopy.agents.skill_middleware import recursion_limit
+from asyncroscopy.core.names import DEFAULT_MCP_URL, DEFAULT_TILED_URI, default_operator_url, devices_of_kind
+from asyncroscopy.safety.permissions import json_sha256
+from asyncroscopy.sim.truth_score import median_error
+from asyncroscopy.skills.registry import list_skills
+from asyncroscopy.workflows.signoff import twin_truth
 from benchmarks.evaluate import RunData
+from benchmarks.evaluate import evaluators as known_evaluators
 from benchmarks.evaluate import score_run as evaluator_scores
 
 if TYPE_CHECKING:
@@ -68,7 +77,7 @@ HERE = Path(__file__).resolve().parent
 WORKFLOW_DIR = HERE / "workflows"
 WORKFLOW_KEYS = {"name", "description", "request", "turns", "runners", "timeout_s", "stack", "setup", "checks",
                  "kind", "held_out", "bar", "reference"}
-# A reference is a made-up run that must pass the checks (benchmarks/validity.py reads it; it never touches a stack).
+# A reference is a made-up run that must pass the checks (benchmark.py validate checks it; it never touches a stack).
 REFERENCE_KEYS = {"calls", "events", "before", "after", "answer", "facts", "skills", "risks"}
 TURN_KEYS = {"say", "wait_for"}
 SETUPS = {"image", "survey_image", "map", "map_plain", "large_map"}
@@ -81,7 +90,7 @@ STAGE_SETTLE_S = 600.0  # The longest a stage move home may take. The mapping tw
 TRANSCRIPTS = HERE.parent / "outputs" / "live" / "transcripts"  # one file per failed run with its messages and calls
 TRANSCRIPT_TEXT_CHARS = 4000
 STACK_KEYS = {"config", "mcp", "operator", "tiled"}
-STACK_DEFAULTS = {"mcp": "http://127.0.0.1:8000/mcp", "operator": "http://127.0.0.1:8001/mcp", "tiled": "http://127.0.0.1:9091"}
+STACK_DEFAULTS = {"mcp": DEFAULT_MCP_URL, "operator": default_operator_url, "tiled": DEFAULT_TILED_URI}
 # The stack being run, set by main. It holds the run_servers config and the addresses it serves.
 STACK: dict[str, str] = {**STACK_DEFAULTS, "name": "twin"}
 # Each setup map is side, field of view, per tile actions and scored. large_map has enough tiles to need zooming.
@@ -99,9 +108,6 @@ CHAT_TOOL_ROUNDS = 40  # tool calls one turn of a chat graph may make
 # The default reads no data. Others read the run's images from Tiled and are set by --evaluators.
 EVALUATORS = ["time"]
 SCORE_COLUMNS = ["time.clock_s", "time.idle_s"]
-
-
-# workflow files
 
 
 class WorkflowError(ValueError):
@@ -139,6 +145,43 @@ def _check_params(where: str, spec: dict) -> None:
         raise WorkflowError(f"{where}: check {spec['check']} {exc}; its parameters: {wanted or 'none'}") from exc
 
 
+def _names_used(code: Any) -> set[str]:
+    found = set(code.co_names)
+    for const in code.co_consts:
+        if inspect.iscode(const):
+            found |= _names_used(const)
+    return found
+
+
+def check_source(fn: Any) -> dict[str, str]:
+    """{name: source} of a check and everything of workflow_checks it reaches by name."""
+    sources: dict[str, str] = {}
+    todo = [fn.__name__]
+    while todo:
+        name = todo.pop()
+        if name in sources or name not in vars(workflow_checks):
+            continue
+        item = vars(workflow_checks)[name]
+        if inspect.ismodule(item) or ((inspect.isfunction(item) or inspect.isclass(item)) and inspect.getmodule(item) is not workflow_checks):
+            continue
+        if inspect.isfunction(item):
+            sources[name], codes = inspect.getsource(item), [item.__code__]
+        elif inspect.isclass(item):
+            sources[name] = inspect.getsource(item)
+            codes = [m.__code__ for m in vars(item).values() if inspect.isfunction(m)]
+        else:
+            sources[name], codes = repr(item), []
+        for code in codes:
+            todo += sorted(_names_used(code))
+    return dict(sorted(sources.items()))
+
+
+def task_hash(entry: dict) -> str:
+    """A benchmark's identity: its YAML entry as written and the source of its checks."""
+    used = sorted({spec.get("check") for spec in entry.get("checks") or [] if isinstance(spec, dict) and spec.get("check") in CHECKS})
+    return json_sha256({"entry": entry, "checks": {name: check_source(CHECKS[name]) for name in used}})
+
+
 def load_workflows(paths: list[Path], stacks: dict[str, dict] | None = None) -> list[dict]:
     """Every workflow in the given YAML files (or directories of them), checked for typos."""
     stacks = load_stacks(paths) if stacks is None else stacks
@@ -150,6 +193,7 @@ def load_workflows(paths: list[Path], stacks: dict[str, dict] | None = None) -> 
             if not isinstance(wf, dict) or "name" not in wf:
                 raise WorkflowError(f"{where}: each workflow needs a name")
             where = f"{file.name}: {wf['name']}"
+            written = copy.deepcopy(wf)
             unknown = set(wf) - WORKFLOW_KEYS
             if unknown:
                 raise WorkflowError(f"{where}: unknown keys {sorted(unknown)}; allowed: {sorted(WORKFLOW_KEYS)}")
@@ -189,6 +233,7 @@ def load_workflows(paths: list[Path], stacks: dict[str, dict] | None = None) -> 
             wf.setdefault("timeout_s", 600)
             wf.setdefault("stack", "twin")
             wf["file"] = file.name
+            wf["task_hash"] = task_hash(written)
             wf["capability"] = file.stem  # one file per capability: the board groups by it
             workflows.append(wf)
     return workflows
@@ -214,9 +259,6 @@ def render(value: Any, facts: dict) -> Any:
     if isinstance(value, dict):
         return {k: render(v, facts) for k, v in value.items()}
     return value
-
-
-# the live stack
 
 
 class Live:
@@ -302,11 +344,9 @@ class Live:
             await asyncio.sleep(1.0)
         raise InfraError(f"the stage was still moving {timeout_s:.0f} s after re-homing")
 
-    # jobs, used by setups
-
     async def run_map(self, plan: dict, timeout_s: float = 1800) -> dict:
         """Run a Mapper job to the end with whichever job tools the endpoint offers; returns its results."""
-        mapper = next((n[: -len("_reserve")] for n in sorted(self.names) if n.startswith("Mapper") and n.endswith("_reserve")), None)
+        mapper = next(iter(devices_of_kind(await self.instrument.call_json("endpoint_info"), "map")), None)
         if "run_job" in self.names:
             started = await self.instrument.call_json("run_job", {"device": mapper or "Mapper", "plan": plan})
             reservation = started.get("reservation_id")
@@ -381,12 +421,8 @@ class Live:
 
     async def ground_truth(self) -> dict | None:
         """The twin's hidden truth (true stage pose of every acquisition), from the operator endpoint."""
-        tool = find_tool(self.operator_names, "_export_ground_truth")
-        text = await self.text(tool, server=self.operator) if tool else None
-        try:
-            return json.loads(text) if text else None
-        except json.JSONDecodeError:
-            return None
+        truth, _ = await twin_truth(self.operator)
+        return truth
 
     async def pois(self, map_key: str) -> list[list[float]]:
         return [[p["x_m"], p["y_m"]] for p in await self.poi_records(map_key) or []]
@@ -401,8 +437,6 @@ class Live:
             return ""
         except Exception as exc:
             return f"{tool} did not answer: {str(exc)[:200]}"
-
-    # setups, run by the benchmark and not the agent
 
     async def setup(self, name: str) -> dict:
         if name in self.setup_cache and name not in IN_PLACE_SETUPS:
@@ -468,9 +502,6 @@ def _floats(text: str | None) -> list[float] | None:
     except json.JSONDecodeError:
         return None
     return [float(v) for v in value] if isinstance(value, list) else None
-
-
-# truth from the data
 
 
 def data_truth(keys: list[str]) -> dict:
@@ -563,15 +594,8 @@ def stitch_truth(map_meta: dict, tile_shape: tuple[int, int], steps: list[dict],
         estimated.append(positions[index] + np.asarray(tile_shape, dtype=np.float64) / 2.0)
     if len(true_centres) < 2:
         return {"error": f"matched only {len(true_centres)} of {len(steps)} tiles to the twin's ground truth"}
-    true_centres = np.asarray(true_centres)
-
-    def median_error(centres: list) -> float:
-        diff = np.asarray(centres) - true_centres
-        diff -= np.median(diff, axis=0)
-        return float(np.median(np.hypot(diff[:, 0], diff[:, 1])))
-
-    stage = median_error(reported)
-    return {"median_px": median_error(estimated), "stage_median_px": stage, "stage_error_fov": stage / float(tile_shape[1]), "tiles": len(true_centres)}
+    stage = median_error(reported, true_centres)
+    return {"median_px": median_error(estimated, true_centres), "stage_median_px": stage, "stage_error_fov": stage / float(tile_shape[1]), "tiles": len(true_centres)}
 
 
 def map_metadata_and_tile_shape(map_key: str) -> tuple[dict, tuple[int, int]]:
@@ -583,9 +607,6 @@ def map_metadata_and_tile_shape(map_key: str) -> tuple[dict, tuple[int, int]]:
     tiles = tiled_client.node_for_key(meta["run"], uri)["tiles"]
     first = next(iter(tiles))
     return meta, tuple(tiles[first].structure().shape[:2])
-
-
-# runners
 
 
 def runners_available() -> dict[str, Any]:
@@ -908,9 +929,6 @@ def message_summary(message: BaseMessage) -> dict:
     }
 
 
-# reports
-
-
 def score_median(rows: list[dict], column: str) -> str:
     """Median of one evaluator objective ("time.idle_s") over a workflow's rows, for the Markdown table."""
     evaluator, _, objective = column.partition(".")
@@ -939,11 +957,31 @@ def markdown(results: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def git_head() -> str:
-    try:
-        return subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=HERE.parent, check=False).stdout.strip() or "?"
-    except OSError:
-        return "?"
+def evaluator_versions(names: list[str]) -> dict[str, str]:
+    """{name: version} of the evaluators a run scores with."""
+    known = known_evaluators()
+    return {name: known[name].version for name in names}
+
+
+def apply_skills(choice: str | None, off: str | None, environ: dict | None = None) -> dict:
+    """Set ASYNCROSCOPY_SKILLS and ASYNCROSCOPY_SKILLS_OFF from --skills and --skills-off; returns the results' ``skills``."""
+    environ = os.environ if environ is None else environ
+    hidden = [name.strip() for name in (off or "").split(",") if name.strip()]
+    if choice == "off":
+        environ["ASYNCROSCOPY_SKILLS"] = "0"
+    elif choice is not None:
+        environ["ASYNCROSCOPY_SKILLS"] = "1"
+        if choice != "on":
+            wanted = {name.strip() for name in choice.split(",") if name.strip()}
+            environ["ASYNCROSCOPY_SKILLS_OFF"] = ""
+            known = {skill.name for skill in list_skills()}
+            if wanted - known:
+                raise WorkflowError(f"--skills names no skill {sorted(wanted - known)}; skills here: {sorted(known)}")
+            hidden += sorted(known - wanted)
+    if off is not None or choice not in (None, "on", "off"):
+        environ["ASYNCROSCOPY_SKILLS_OFF"] = ",".join(hidden)
+    now = settings.get()
+    return {"on": now.skills, "off": list(now.skills_off), "enabled": [skill.name for skill in list_skills() if not skill.off]}
 
 
 async def main(args: argparse.Namespace) -> int:
@@ -967,6 +1005,11 @@ async def main(args: argparse.Namespace) -> int:
     workflows = [wf for wf in on_stack if (not args.only or wf["name"] in args.only) and not (args.no_held_out and wf.get("held_out"))]
     if not (HERE.parent / STACK["config"]).exists() and not Path(STACK["config"]).exists():
         print(f"stack {args.stack} needs {STACK['config']}, which this checkout does not have: fix config: in its stacks: entry")
+        return 2
+    try:
+        skills = apply_skills(args.skills, args.skills_off)
+    except WorkflowError as exc:
+        print(exc)
         return 2
     available = runners_available()
     if args.graph:
@@ -992,13 +1035,18 @@ async def main(args: argparse.Namespace) -> int:
     await warm_up(config)
     baseline = await live.snapshot()
     EVALUATORS[:] = [n.strip() for n in args.evaluators.split(",") if n.strip()]
+    unknown_evaluators = sorted(set(EVALUATORS) - set(known_evaluators()))
+    if unknown_evaluators:
+        print(f"no evaluator {unknown_evaluators}; registered: {sorted(known_evaluators())}")
+        return 2
     SCORE_COLUMNS[:] = [c.strip() for c in args.score_columns.split(",") if c.strip()]
     if args.n != "bar" and not (args.n.isdigit() and int(args.n) >= 1):
         print(f"--n is a number of trials or 'bar', not {args.n!r}")
         return 2
     replaying = REFERENCE in (args.runners or [])
     results = {"model": args.model, "stack": args.stack, "git": git_head(), "n": args.n, "started": time.time(), "runners": available,
-               "evaluators": EVALUATORS, "score_columns": SCORE_COLUMNS, "workflows": {}}
+               "evaluators": evaluator_versions(EVALUATORS), "score_columns": SCORE_COLUMNS, "skills": skills,
+               "stack_fingerprint": (await config.info()).get("stack_fingerprint"), "workflows": {}}
     out = Path(args.out or HERE / "results" / f"workflows_{args.stack}.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     for wf in workflows:
@@ -1007,7 +1055,7 @@ async def main(args: argparse.Namespace) -> int:
                 continue
             if runner != REFERENCE and (runner not in available or (runner in SINGLE_TURN and wf.get("turns"))):
                 why = f"no {runner} runner in this checkout" if runner not in available else f"{runner} takes one request; this workflow has turns"
-                results["workflows"][f"{wf['name']}/{runner}"] = {"passed": 0, "of": 0, "skipped": why, "rows": []}
+                results["workflows"][f"{wf['name']}/{runner}"] = {"passed": 0, "of": 0, "skipped": why, "rows": [], "task_hash": wf["task_hash"]}
                 continue
             rows = []
             # A replayed reference has no model in it, so one trial; --n bar runs as many trials as the workflow's bar counts.
@@ -1027,7 +1075,7 @@ async def main(args: argparse.Namespace) -> int:
             results["workflows"][f"{wf['name']}/{runner}"] = {
                 "passed": sum(r["ok"] for r in counted), "of": len(counted), "infra_errors": len(rows) - len(counted),
                 "capability": wf["capability"], "kind": wf.get("kind", KINDS[0]), "held_out": bool(wf.get("held_out")),
-                "bar": bar, "rows": rows,
+                "bar": bar, "rows": rows, "task_hash": wf["task_hash"],
             }
             out.write_text(json.dumps(results, indent=2, default=str), encoding="utf-8")
     try:
@@ -1060,6 +1108,10 @@ if __name__ == "__main__":
     parser.add_argument("--n", default="1", help="Trials per workflow and runner: a number (default 1), or 'bar' for as many as each workflow's bar counts (5 unless it sets its own).")
     parser.add_argument("--no-held-out", action="store_true", help="Leave out workflows marked held_out: use it while tuning the agent.")
     parser.add_argument("--allow-hardware", action="store_true", help="Run even when the endpoint's stack does not say it is simulated.")
+    parser.add_argument("--skills", default=None,
+                        help="Agent skills for this run: on, off, or skill names separated by commas (only those). Sets ASYNCROSCOPY_SKILLS "
+                        "and ASYNCROSCOPY_SKILLS_OFF; left out, they stay as the environment has them (off unless set).")
+    parser.add_argument("--skills-off", default=None, help="Skill names or globs to hide, separated by commas (ASYNCROSCOPY_SKILLS_OFF).")
     parser.add_argument("--history", default=None, help="Directory finished runs are kept in (default: outputs/benchmarks/history).")
     # The agents' own default: ASYNCROSCOPY_MODEL, else the default agent profile's model.
     parser.add_argument("--model", default=settings.get().model or load_profile().model)

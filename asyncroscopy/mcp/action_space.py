@@ -63,11 +63,7 @@ def _json_type(schema: dict) -> dict:
 
 
 def _purpose(description: str, prefix: str | None, command: str | None = None) -> str:
-    """The first line of a tool's description that says what it does (not the Tango plumbing lines).
-
-    A command declared with plain tango.server.command has no doc on the wire; its name, and what
-    its argument is, stand in.
-    """
+    """The first line of a tool's description that says what it does, else its name and argument."""
     skip = ("Tango Device Class:", "Tango Command:", "Input Type:", "Input Description:", "Output Type:", "Example request:")
     lines = [line.strip() for line in (description or "").splitlines()]
     for line in lines:
@@ -80,11 +76,7 @@ def _purpose(description: str, prefix: str | None, command: str | None = None) -
 
 
 def _arguments(tool, hinted_args: list[dict] | None) -> list[dict]:
-    """A tool's arguments from its input schema, with the hints' units, ranges and axes laid over them.
-
-    A JSON-request command whose fields are hinted (a YAML command with several inputs) is shown by its
-    fields alone: the MCP tool takes them by name, so the request parameter is only another way in.
-    """
+    """A tool's arguments from its input schema with the hints laid over; a hinted JSON request shows its fields alone."""
     params = tool.parameters or {}
     props = params.get("properties") or {}
     required = set(params.get("required") or [])
@@ -246,7 +238,6 @@ def actions_with(space: dict, role: str, device: str | None = None) -> list[dict
     return [a for a in space.get("actions", []) if a["role"] == role and (device is None or a["device"] == device)]
 
 
-# command line
 def _arg_text(arg: dict) -> str:
     text = arg["name"]
     if arg.get("elements"):

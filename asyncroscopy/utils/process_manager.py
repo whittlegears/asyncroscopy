@@ -272,12 +272,11 @@ class ProcessManager:
         popen_kwargs: dict = {"env": env, "cwd": cwd, "stdout": subprocess.PIPE, "stderr": subprocess.PIPE}
         popen_kwargs.update(kwargs)
 
-        # Start child process in its own group for clean tree termination
-        if os.name == "nt": # Windows
+        if os.name == "nt":
             popen_kwargs.setdefault(
                 "creationflags", subprocess.CREATE_NEW_PROCESS_GROUP
             )
-        else: # Linux
+        else:
             if "start_new_session" not in popen_kwargs and "preexec_fn" not in popen_kwargs:
                 popen_kwargs["start_new_session"] = True
 
@@ -303,8 +302,7 @@ class ProcessManager:
 
     @staticmethod
     def _drain(stream, buf: deque, echo_prefix: str | None = None) -> None:
-        """Continuously reads lines and saves them into a queue, preventing the pipe from getting blocked.
-        With echo_prefix, each line is also printed to stdout behind that prefix."""
+        """Read lines into a queue so the pipe never blocks, echoing them behind ``echo_prefix``."""
         if stream is None:
             return
         def _read() -> None:
@@ -359,20 +357,16 @@ class ProcessManager:
         try:
             active = [mp for mp in self.active_processes if mp.running]
 
-            # Broadcast the kill signal to every process
             for mp in reversed(active):
                 self._send_kill_request(mp.process)
 
-            # Wait for all of them concurrently with shared timeout
             start_time = time.time()
             for mp in reversed(active):
                 proc = mp.process
                 if proc.poll() is not None:
                     continue
 
-                # Determine how much of the global timeout remains.
-                # If we have spent more time than allowed, provide a small wait
-                # to allow for immediate process exit before doing a forced kill.
+                # Past the shared timeout, still give a process that is exiting a moment before the kill.
                 elapsed = time.time() - start_time
                 rem = max(0.1, self.timeout - elapsed)
 
@@ -388,7 +382,6 @@ class ProcessManager:
             self.active_processes.clear()
             self._remove_state_file()
         finally:
-            # Restore normal Ctrl+C behavior
             if old_handler is not None:
                 try:
                     signal.signal(signal.SIGINT, old_handler)
@@ -422,37 +415,6 @@ class ProcessManager:
             except (ProcessLookupError, PermissionError):
                 proc.kill()
 
-    def _terminate_popen(self, proc: subprocess.Popen):
-        """Terminates a process via SIGTERM, waits, and escalates to SIGKILL if necessary."""
-        if proc.poll() is not None:
-            return
-
-        if os.name == "nt":
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                capture_output=True,
-            )
-            try:
-                proc.wait(timeout=self.timeout)
-            except subprocess.TimeoutExpired:
-                pass
-        else:
-            try:
-                pgid = os.getpgid(proc.pid)
-                os.killpg(pgid, signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
-                proc.terminate()
-
-            try:
-                proc.wait(timeout=self.timeout)
-            except subprocess.TimeoutExpired:
-                try:
-                    pgid = os.getpgid(proc.pid)
-                    os.killpg(pgid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    proc.kill()
-                proc.wait()
-
     def _cleanup_stale_state(self):
         """Reads state file on startup, terminates surviving PIDs, and deletes the file."""
         if not self.state_file.exists():
@@ -474,12 +436,7 @@ class ProcessManager:
 
     @staticmethod
     def _is_recorded_process(pid: int, recorded_at: float) -> bool:
-        """Whether ``pid`` can still be the process the state file recorded at ``recorded_at``.
-
-        The operating system reuses process ids, so a state file left by a crash can name a process that has
-        nothing to do with this launcher: another stack, or any other program. A process started after the file
-        was last written cannot be one it recorded. Without psutil nothing can be told apart, so nothing is stopped.
-        """
+        """Whether ``pid`` can still be the recorded process: ids are reused, and one started after the record is not."""
         if psutil is None:
             return False
         try:
@@ -488,15 +445,7 @@ class ProcessManager:
             return False
 
     def _kill_stale_pid(self, pid: int):
-        """Best-effort termination of orphan process IDs from a previous crash.
-
-        Recorded PIDs are process-group leaders (start_process uses
-        start_new_session=True), so signaling the whole group is required:
-        a bare os.kill only reaches a wrapper like `uv run`, and once that
-        wrapper is SIGKILLed it has no chance to relay the signal to the
-        actual device-server child it spawned, leaving that child running
-        and still holding its Tango server-instance name.
-        """
+        """Kill orphan process groups from a crash: only the group reaches the device server behind a ``uv run`` wrapper."""
         if os.name == "nt":
             subprocess.run(
                 ["taskkill", "/F", "/T", "/PID", str(pid)],
@@ -521,7 +470,6 @@ class ProcessManager:
             except (ProcessLookupError, PermissionError):
                 return
 
-            # Brief poll to see if SIGTERM was honored
             start = time.time()
             while time.time() - start < 1.0:
                 try:

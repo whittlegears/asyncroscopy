@@ -1,11 +1,12 @@
 """Helpers shared by the benchmark runners: model warm-up, infrastructure errors, the
-Instrument Trace, live tool lookup and the "sleepwalking" count."""
+Instrument Trace, live tool lookup, the "sleepwalking" count and the git commit."""
 
 from __future__ import annotations
 
 import asyncio
 import fnmatch
 import json
+import subprocess
 import sys
 import time
 from collections.abc import Iterable
@@ -16,7 +17,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from asyncroscopy.skills.registry import list_skills, read_front_matter
+from asyncroscopy.skills.registry import list_skills, read_front_matter, shipped_dir
 
 if TYPE_CHECKING:
     from asyncroscopy.agents.config import AgentConfig
@@ -26,6 +27,13 @@ TRACE_DIR = Path("outputs/trace")
 # These errors come from the stack and not the agent. Rows with them are left out of the pass rate.
 INFRA_ERRORS = ("llama-server process has terminated", "model runner has unexpectedly stopped", "CUDA error",
                 "API_DeviceTimedOut", "Not able to acquire serialization")
+
+
+def git_head() -> str:
+    try:
+        return subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=PROJECT_DIR, check=False).stdout.strip() or "?"
+    except OSError:
+        return "?"
 
 
 def is_infra_error(error: str | None) -> bool:
@@ -52,7 +60,7 @@ def skill_tools(name: str = "mapping") -> set[str]:
     found = next((s.tools for s in list_skills() if s.name == name), None)
     if found is not None:
         return set(found)
-    shipped = Path(__file__).resolve().parents[1] / "asyncroscopy" / "skills" / name / "SKILL.md"
+    shipped = shipped_dir() / name / "SKILL.md"
     return set(read_front_matter(shipped)[0].get("tools") or []) if shipped.is_file() else set()
 
 

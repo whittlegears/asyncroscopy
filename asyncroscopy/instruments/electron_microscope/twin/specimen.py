@@ -104,7 +104,6 @@ class Specimen:
     def from_options(cls, options: dict, context: "SpecimenContext") -> "Specimen":
         raise NotImplementedError
 
-    # What the instrument model reads
     def projected_weight(self, x_min: float, y_min: float, n: int, pixel_m: float, level: str, z_exponent: float, damage: dict[int, float]) -> np.ndarray:
         """sum(Z^n * atoms per cubic angstrom * thickness in angstrom) on an n x n grid.
 
@@ -146,7 +145,6 @@ class Specimen:
         """The elements the specimen may contain (EDS and status reports)."""
         return ()
 
-    # What an atomistic twin reads for each view
     def view(self, request: ViewRequest) -> FieldView:
         """What the specimen shows in this field: atoms in the field, per-pixel maps and/or records."""
         raise NotImplementedError(f"specimen source {self.source!r} has no per-view rendering (render modes: {self.render_modes})")
@@ -171,7 +169,6 @@ class Specimen:
         """Problems worth a warning at start-up (the twin logs them)."""
         return []
 
-    # What evaluators read
     def ground_truth(self) -> dict:
         """{"known": bool, "particles": [...], ...}: what a scorer may compare against; never shown to an agent."""
         return {"known": False, "particles": []}
@@ -205,7 +202,6 @@ class SpecimenContext:
         return EventRng(int(options["seed"])) if options.get("seed") is not None else self.rng
 
 
-# Registry
 SPECIMENS: Registry[type[Specimen]] = Registry(
     "asyncroscopy.specimens",
     {

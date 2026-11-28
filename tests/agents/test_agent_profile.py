@@ -7,7 +7,7 @@ from asyncroscopy.agents.profile import MIDDLEWARE, load_profile
 
 
 def test_the_small_model_profile_keeps_its_model_and_middleware():
-    profile = load_profile("default")
+    profile = load_profile("small")
     assert profile.model == "qwen3:8b" and profile.num_ctx == 8192 and profile.middleware == MIDDLEWARE
 
 
@@ -53,7 +53,7 @@ def test_the_middleware_is_built_in_the_profiles_order():
 
 # What depends on the model is data in the profile. A capable model's profile turns off the aids for a small model.
 def test_the_capable_profile_extends_the_default_and_turns_the_small_model_aids_off():
-    default, capable = load_profile("default"), load_profile("capable")
+    default, capable = load_profile("small"), load_profile("capable")
     assert default.tool_gates and default.replies == "notes" and default.skills.from_request == 2
     assert capable.tool_gates == () and capable.replies == "facts_and_notes" and capable.skills.prompt_chars > default.skills.prompt_chars
     # What it does not change it takes from the default. That is the tool selection, the team split and the middleware.
@@ -103,7 +103,7 @@ def test_the_default_profiles_tool_gates_read_the_request(request_text, held):
 
     tools = ["annotate", "add_poi", "Scope_place_beam", "Scope_place_beam_at", "view_data"]
     beam = {"Scope_place_beam", "Scope_place_beam_at"}
-    found = held_back(load_profile("default").tool_gates, request_text, tools)
+    found = held_back(load_profile("small").tool_gates, request_text, tools)
     assert found - beam == held - beam
     if beam & held:
         assert beam <= found
@@ -113,7 +113,7 @@ def test_the_default_profiles_tool_gates_read_the_request(request_text, held):
 def test_a_stage_position_in_the_request_holds_back_the_pixel_conversions():
     from asyncroscopy.agents.profile import held_back
 
-    gates = load_profile("default").tool_gates
+    gates = load_profile("small").tool_gates
     assert held_back(gates, "Go to x = 1.5e-7 m and image", ["to_stage", "to_pixel"]) == {"to_stage", "to_pixel"}
     assert held_back(gates, "Where is the particle in a.h5 on the stage?", ["to_stage", "to_pixel"]) == set()
 

@@ -65,9 +65,6 @@ def default_paths() -> list[Path]:
     return [WORKFLOW_DIR] + ([MINE] if MINE.is_dir() else [])
 
 
-# validity
-
-
 def _before(wf: dict) -> dict:
     return {**BEFORE, **((wf.get("reference") or {}).get("before") or {})}
 
@@ -131,9 +128,6 @@ def validity(wf: dict, require_reference: bool = False) -> dict:
         out["valid"] = False
         out["why"] += [f"the reference fails {label}: {detail}" for label, detail in reference_failed.items()]
     return out
-
-
-# commands
 
 
 def _select(args: argparse.Namespace) -> list[dict]:

@@ -43,7 +43,7 @@ class FakeDevice:
         pass
 
     @staticmethod
-    def _dry(job):
+    def _trace_fields(job):
         return {}
 
 
