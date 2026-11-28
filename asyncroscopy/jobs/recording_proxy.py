@@ -104,7 +104,7 @@ class RecordingProxy:
         if self._commands is None:
             try:
                 names = {str(n).lower() for n in self._proxy.get_command_list()}
-            except Exception:  # when commands cannot be listed every unknown name is recorded as a command, which is the safe side
+            except Exception:  # unknown names are recorded as commands: the safe side
                 names = None
             object.__setattr__(self, "_commands", names)
         return self._commands
@@ -133,7 +133,7 @@ class RecordingProxy:
             try:
                 hints = json.loads(self._proxy.read_attribute(ACTION_HINTS).value)
                 stops = frozenset(str(name).lower() for name, hint in hints.items() if isinstance(hint, dict) and hint.get("stop") is True)
-            except Exception:  # the device declares no stops, so only the job device's own list applies
+            except Exception:  # no device stops: only the job device's own list applies
                 stops = frozenset()
             object.__setattr__(self, "_stops", stops)
         return self._stops
@@ -152,7 +152,7 @@ class RecordingProxy:
         def write(*args, **kwargs):
             attribute = args[0] if args else kwargs.get("attr_name")
             value = args[1] if len(args) > 1 else kwargs.get("value")
-            if method in ATTRIBUTE_WRITES:  # all of these are traced as write_attribute
+            if method in ATTRIBUTE_WRITES:  # traced as write_attribute
                 arguments = {"attribute": attribute, "value": value} if isinstance(attribute, str) else list(args)
                 self._recorder(self._address, "write_attribute", "write", arguments, False)
             else:
@@ -178,9 +178,9 @@ class RecordingProxy:
             return lambda *args: self._call(name, args)
         attributes = self._attribute_names()
         if lowered in attributes:
-            return getattr(self._proxy, name)  # reading a Tango attribute
+            return getattr(self._proxy, name)
         if commands is None:
-            return lambda *args: self._call(name, args)  # when unsure record it as a command, which is the safe side
+            return lambda *args: self._call(name, args)  # unsure: record as a command, the safe side
         raise DryRunRefused(
             f"a dry run does not offer DeviceProxy.{name} on {self._address}: it is not an attribute, a command, "
             "or a DeviceProxy method known to only read (recording_proxy.PROXY_READS) or to write (PROXY_WRITES)"

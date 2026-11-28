@@ -8,4 +8,4 @@ class JobError(Exception):
     def __init__(self, code: str, message: str, **details: Any) -> None:
         super().__init__(message)
         self.code = code
-        self.details = details  # extra fields of the error object
+        self.details = details

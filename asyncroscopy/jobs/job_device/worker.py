@@ -47,10 +47,10 @@ class JobWorker:
             unsafe = f"{type(exc).__name__}: {exc}"
             self._trace.record(f"{cls}.on_suspend", False, time.time(), job_id=job_id, run_id=job["reservation_id"], error=unsafe, **self._trace_fields(job))
         with self._lock:
-            if job["state"] not in ("running", "paused"):  # aborting already
+            if job["state"] not in ("running", "paused"):  # already aborting
                 return "aborted"
             job["state"] = "paused"
-            if unsafe:  # a pause that could not make the instrument safe must not look safe
+            if unsafe:  # an unsafe pause must not look safe
                 job["last_error"] = f"paused, but the instrument was not made safe: {unsafe}"
             job["paused_since"] = time.time()
             self._save(job)
@@ -96,7 +96,7 @@ class JobWorker:
                 return
 
     def _renew(self, job: dict) -> None:
-        if lease_seconds(self) > 0 and job["state"] in RUNNING_JOB_STATES:  # a paused job someone is watching keeps its lease
+        if lease_seconds(self) > 0 and job["state"] in RUNNING_JOB_STATES:  # a watched paused job keeps its lease
             job["lease_until"] = time.time() + lease_seconds(self)
 
     def _omni_worker(self, job: dict, job_id: str) -> None:

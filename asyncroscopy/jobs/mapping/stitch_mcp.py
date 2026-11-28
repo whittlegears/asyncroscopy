@@ -12,7 +12,7 @@ import threading
 
 from .stitch_service import register_stitch_service
 
-ANALYSIS_CALL_S = 60.0  # longest one call to the analysis server may take
+ANALYSIS_CALL_S = 60.0  # longest one analysis-server call may take
 
 
 class AnalysisSession:

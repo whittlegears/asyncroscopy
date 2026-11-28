@@ -56,7 +56,7 @@ if TYPE_CHECKING:
     from .run_file import RunFile
 
 DEFAULTS = {"track": False, "tracker": "linear", "window": DEFAULT_WINDOW}
-MAX_SHIFT_FOV = 0.1  # by default one correction moves at most a tenth of a tile
+MAX_SHIFT_FOV = 0.1  # a tenth of a tile per correction by default
 REGISTRATION_MARGIN_PX = 3.0  # added to every registration search bound
 KEY = "drift_tracking"
 
@@ -136,7 +136,7 @@ def correct(job: dict, profile: InstrumentProfile, tile: dict, trace: Callable[.
     state = _state(job)
     tracker = _tracker(job)
     now = profile.clock_s()
-    t_mid = now + profile.tile_seconds(plan) / 2.0  # where the frame's middle will be on the instrument's clock
+    t_mid = now + profile.tile_seconds(plan) / 2.0  # frame middle on the instrument's clock
     predicted = tracker.predict(t_mid) if tracker.observations else (0.0, 0.0)
     previous = list(state["shift_m"])
     shift, limited = bounded_correction([-predicted[0], -predicted[1]], previous, [0.0, 0.0], float(settings["max_shift_m"]), float(settings["max_total_m"]))

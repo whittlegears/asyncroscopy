@@ -91,7 +91,7 @@ PLAN_DEFAULTS: dict[str, Any] = {
     "error_tolerance_m": 1e-9,
 }
 PLAN_FIELDS = set(PLAN_DEFAULTS) | {"dose_budget_e_per_a2", "detector"}
-HISTORY_KEPT = 200  # history entries a job keeps. The trace has every step.
+HISTORY_KEPT = 200  # the trace has every step
 
 
 def read_image(key: str, detector: str, data_proxy: tango.DeviceProxy | None = None) -> np.ndarray:
@@ -428,7 +428,7 @@ class TuneContext:
             raise TuneFailed("corrector_error", f"correct {name} {values} failed: {exc.args[0].desc.strip()[:300]}") from exc
         self.state["corrector_sent"][name] = totals  # recorded only once sent, so a restore undoes exactly this
         self.state["writes"] += 1
-        self.device._persist(self.job)  # saved to disk so a device restart does not forget a correction it never undid
+        self.device._persist(self.job)  # so a restart does not forget an undone correction
         self.log(kind="corrector_correct", name=name, values_m=values)
 
 
@@ -569,7 +569,7 @@ class Tuner(JobDevice):
         calibrated = bool(self.vendor_dose_calibrated)
         _check_vendor_dose_counted(strategy, vendor, frames_per, simulated, calibrated)
         per_frame = frame_dose(current, float(p["dwell_s"]), float(p["fov_m"]), int(p["imsize"]))
-        frames = int(strategy.exposures(p, frames_per)) + 2  # plus the sharpness images before and after
+        frames = int(strategy.exposures(p, frames_per)) + 2  # plus sharpness images before and after
         measurements = int(strategy.measurements(p, frames_per)) + 2
         worst = frames * per_frame
         _check_within_limits(strategy, p, current, worst, per_frame, frames, measurements)
@@ -684,7 +684,7 @@ class Tuner(JobDevice):
         plan = job["resolved_plan"]
         microscope = self.proxy(self.microscope_device_address)
         scan = self.proxy(self.scan_device_address)
-        microscope.blank_beam()  # the sample is exposed only while a measurement is taken
+        microscope.blank_beam()  # the sample is exposed only during a measurement
         # On a resume, undo what an earlier attempt left first; a fresh snapshot over it would become the baseline.
         previous = job.get("tune") or {}
         unrestored = self._left_unrestored(previous)
@@ -716,7 +716,7 @@ class Tuner(JobDevice):
             "steps": 0, "images": 0, "writes": 0, "dose_e_per_a2": 0.0, "dose_budget_e_per_a2": float(plan["dose_budget_e_per_a2"]),
             "corrector_sent": {}, "history": [],
         }
-        self._persist(job)  # saved before the first change so a restart during the tune finds this snapshot
+        self._persist(job)  # saved before the first change so a restart finds this snapshot
         microscope.set_fov(float(plan["fov_m"]))
         scan.imsize = int(plan["imsize"])
         scan.dwell_time = float(plan["dwell_s"])
@@ -833,7 +833,7 @@ class Tuner(JobDevice):
     def on_finish(self, job: dict) -> dict:
         errors: list[str] = []
         self.proxy(self.microscope_device_address).blank_beam()
-        self._restore_imaging(job, errors)  # the tuned optics stay and the imaging settings go back
+        self._restore_imaging(job, errors)  # the tuned optics stay; imaging settings go back
         if errors:
             job["tune"]["restore_errors"] = errors
         return {}

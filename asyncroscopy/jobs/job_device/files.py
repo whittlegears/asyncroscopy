@@ -10,7 +10,7 @@ from pathlib import Path
 from asyncroscopy.core.names import RUNNING_JOB_STATES
 from .progress import done_ranges_from, read_last_steps
 
-FINISHED_STATES = {"done", "released"}  # left on disk at Init and opened when asked for by id
+FINISHED_STATES = {"done", "released"}  # left on disk at Init, opened by id
 PLAN_KEYS = frozenset({"plan_id", "device", "plan", "resolved_plan", "steps", "step_count", "estimate", "limits", "dry_run", "risk_overrides", "created", "trace_offset"})
 KEPT_STEP_RESULTS = 10_000
 
@@ -59,7 +59,7 @@ class JobFiles:
             plan_path = self._plan_path(reservation_id)
             if plan_path.exists():
                 job = {**json.loads(plan_path.read_text(encoding="utf-8")), **progress}
-            else:  # an older job file holds the plan too, so write the plan to its own file
+            else:  # an older job file holds the plan too: split it out
                 job = dict(progress)
                 self._save_plan(job)
         except (OSError, json.JSONDecodeError, KeyError) as exc:

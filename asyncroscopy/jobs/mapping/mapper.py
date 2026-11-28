@@ -48,13 +48,13 @@ from .pipeline import DRY_RUN_SKIPPED, Pipeline
 from .profile import PROFILES, SUMMARY_KEYS_SHOWN, InstrumentProfile, MapContext, MapSettings, Setting
 from .run_file import RunFile, job_trace_events
 
-DEFAULT_STAGE_SIGMA_M = 5e-8  # used when neither the Mapper nor the STAGE gives one, and suits a typical TEM stage
+DEFAULT_STAGE_SIGMA_M = 5e-8  # when neither the Mapper nor the STAGE gives one; suits a typical TEM stage
 
 
 class Mapper(JobDevice):
     JOB_KIND = "map acquisition: a grid of images over a stage box, stitched into a zoomable map when it finishes"
-    PLAN_EXAMPLE = {"size_m": [6e-7, 6e-7], "fov_m": 1.6e-7}  # a 600 nm square around the current stage position
-    PLAN_SCHEMA = "map_plan"  # resolve_plan validates every plan against it
+    PLAN_EXAMPLE = {"size_m": [6e-7, 6e-7], "fov_m": 1.6e-7}  # a 600 nm square around the stage position
+    PLAN_SCHEMA = "map_plan"
     SUPPORTS_DRY_RUN = True
 
     instrument_profile = device_property(
@@ -95,7 +95,7 @@ class Mapper(JobDevice):
         if declared:
             try:
                 stored = tango.Util.instance(False).get_database().get_device_property(self.get_name(), list(declared))
-            except tango.DevFailed as exc:  # with no database every setting keeps its default
+            except tango.DevFailed as exc:  # no database: every setting keeps its default
                 self.warn_stream(f"profile settings not read from the database ({exc.args[0].desc.strip()[:200]}); using defaults")
         return {name: setting.parse(list(stored.get(name, []))) for name, setting in declared.items()}
 
@@ -173,7 +173,7 @@ class Mapper(JobDevice):
         for address, commands in needs.items():
             try:
                 offered = {str(n).lower() for n in self.proxy(address, timeout_s=3.0).get_command_list()}
-            except Exception as exc:  # the device is down, so the job's first step would fail the same way
+            except Exception as exc:  # device down: the job's first step would fail the same way
                 raise ValueError(f"the {profile.name!r} instrument profile drives {address}, which did not answer ({str(exc).strip().splitlines()[0][:200]})") from None
             missing = [c for c in dict.fromkeys(commands) if c.lower() not in offered]
             if missing:
@@ -296,16 +296,16 @@ class Mapper(JobDevice):
     def on_start(self, job: dict) -> None:
         plan = job["resolved_plan"]
         profile = self.profile()
-        profile.check_start(job)  # checked before anything is set so a refusal changes nothing
+        profile.check_start(job)  # before anything is set, so a refusal changes nothing
         sample = self._sample_now()
         self._refuse_another_load(job, sample)  # also before anything is set
         # The instrument stays safe between tiles and is made unsafe only while a tile is acquired.
         profile.setup(job)
-        live_drift.start(job, profile)  # remembers the image shift so it can be put back at the end
+        live_drift.start(job, profile)  # remembers the image shift to restore at the end
         if plan.get("zoom_only") and "zoom_shift_before" not in job:
-            job["zoom_shift_before"] = profile.get_image_shift(job)  # put back when the job ends
+            job["zoom_shift_before"] = profile.get_image_shift(job)  # restored when the job ends
         if plan.get("revisit_only") or plan.get("zoom_only") or job.get("dry_run"):
-            job["run_closed"] = True  # no tiles or no images, so no run file
+            job["run_closed"] = True  # no tiles or images: no run file
         if not job.get("run_closed"):
             self._open_run_file(job, sample)
 
@@ -335,7 +335,7 @@ class Mapper(JobDevice):
         if step["phase"] == "tiles":
             return self._tile(job, step)
         profile = self.profile()
-        live_drift.finish(job, profile)  # the tiles are done so the image shift goes back before any revisit move
+        live_drift.finish(job, profile)  # restore the image shift before any revisit move
         if job.get("dry_run") and not (step["phase"] == "revisit" and job["resolved_plan"].get("regions")):
             return {"phase": step["phase"], "skipped": DRY_RUN_SKIPPED}
         self._close_run_file(job)  # stitching reads the finished run file
@@ -359,13 +359,13 @@ class Mapper(JobDevice):
             raise RuntimeError(f"tile {index} at ({tile['x']:.3e}, {tile['y']:.3e}) lies outside the plan box; refusing to move")
         profile = self.profile()
         if not self._move(job, tile["x"], tile["y"]):
-            return None  # aborted during a long move, and a resume moves again
+            return None  # aborted mid-move; a resume moves again
         reported = [float(v) for v in profile.stage_reported(job)]
         correction = live_drift.correct(job, profile, tile, self._trace_drift_correction)
         # Unsafe only for this tile's acquisitions, and safe again before returning, even on an error.
         acquired_tile = profile.acquire_tile(job, tile)
         if acquired_tile is None:
-            return None  # aborted part way through the tile, and a resume redoes it
+            return None  # aborted mid-tile; a resume redoes it
         image_key, acquired = acquired_tile["image_key"], acquired_tile["acquired"]
         spectrum, spectrum_key = acquired_tile.get("spectrum"), acquired_tile.get("spectrum_key")
         job.setdefault("first_tile_s", acquired)
@@ -419,16 +419,16 @@ class Mapper(JobDevice):
             self.profile().set_image_shift(job, job["zoom_shift_before"])
 
     def on_suspend(self, job: dict, reason: str) -> None:
-        self.profile().make_safe(job)  # already safe between tiles, done again so a pause never depends on that
+        self.profile().make_safe(job)  # already safe between tiles; done again so a pause never relies on it
 
     def on_stop(self, job: dict, reason: str) -> None:
         profile = self.profile()
-        profile.make_safe(job)  # blank the beam, retract the tip
+        profile.make_safe(job)
         self._restore_zoom_shift(job)
-        live_drift.finish(job, profile)  # the image shift goes back to its value before the map
+        live_drift.finish(job, profile)  # restore the image shift from before the map
         if not job.get("run_closed"):
             self._write_trace(job)
-            self._run_file(job).close()  # a resume opens it again
+            self._run_file(job).close()  # a resume reopens it
 
     def on_finish(self, job: dict) -> dict:
         # A finished map must not leave the beam parked or the tip engaged on the last tile.
@@ -456,7 +456,7 @@ class Mapper(JobDevice):
                 if run and job["resolved_plan"].get("stitch"):
                     # Calling the analysis server from this Tango command would block the device, so use a thread.
                     threading.Thread(target=self._stitch_released, args=(job, run), name="mapper-release-stitch", daemon=True).start()
-        except Exception as exc:  # the release itself succeeded, so do not turn this into an error
+        except Exception as exc:  # the release succeeded; not an error
             self.warn_stream(f"Released, but the run file was not finalized: {exc}")
         return reply
 
@@ -493,12 +493,12 @@ class Mapper(JobDevice):
         if tracked:
             out["drift_tracking"] = tracked
         if job.get("dry_run"):
-            out["acquisitions"] = DRY_RUN_SKIPPED  # tells the reader a dry run made no real data
+            out["acquisitions"] = DRY_RUN_SKIPPED
         out.update(self.profile().summary(job))
         return out
 
     def delete_device(self) -> None:
-        super().delete_device()  # stops the workers first, so no run file is written while it closes
+        super().delete_device()  # stops the workers first, so no run file is written while closing
         for run in list(getattr(self, "_runs", {}).values()):
             try:
                 run.close()

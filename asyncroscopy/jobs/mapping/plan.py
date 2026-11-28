@@ -31,9 +31,9 @@ from .stitch_service import StitchService
 
 # pyTEMlib's stitcher searches each overlap only up to this share of its width.
 STITCH_SEARCH_SHARE = 0.6
-REVISIT_FOV_MIN_FRACTION = 1 / 20  # a revisit image may zoom in at most 20x on a tile
-ZOOM_MIN_FOV_M = 5e-9  # no zoom tier is narrower than this because the dose climbs fast as the field of view shrinks
-ZOOM_STEP = 8  # without fovs_m each tier's field of view is the one before divided by this
+REVISIT_FOV_MIN_FRACTION = 1 / 20  # at most 20x zoom on a tile
+ZOOM_MIN_FOV_M = 5e-9  # dose climbs fast as the field shrinks
+ZOOM_STEP = 8  # without fovs_m each tier's field is the previous one divided by this
 ZOOM_EXAMPLE = {"zoom": {"parent": "<the image key to start from>.h5"}}
 EMPTY_GRID = {"rows": 0, "cols": 0, "x0": 0.0, "dx": 0.0, "y0": 0.0, "dy": 0.0}
 
@@ -61,7 +61,7 @@ def stated_dose(request: str) -> float | None:
     return None
 
 
-REVISIT_ONLY_KEYS = ("map", "top_k", "points")  # fields that belong inside revisit and not at the top level
+REVISIT_ONLY_KEYS = ("map", "top_k", "points")  # belong inside revisit, not at the top level
 ZOOM_PLAN_FIELDS = frozenset({"zoom", "dry_run", "label", "budgets"})  # plus the profile's budget and image fields
 
 

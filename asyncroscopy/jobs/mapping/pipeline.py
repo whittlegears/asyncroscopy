@@ -35,10 +35,10 @@ from . import live_drift
 from .profile import InstrumentProfile
 from .stitch_service import STITCH_SERVICES, StitchService
 
-REVISIT_EDGE_SHIFT = 0.8  # a revisit image may sit this fraction of its half-width off a region near the box edge
-ZOOM_FEATURE_SIZE = (0.25, 2.0)  # a tier aims at a feature between these multiples of its own field of view across
-ZOOM_WINDOW_SHARE = 1 / 16  # place_image searches this share of the parent's field of view around the aimed point
-ZOOM_CANDIDATES = 8  # features asked for at each tier. The first whose finer image fits inside the parent is used.
+REVISIT_EDGE_SHIFT = 0.8  # fraction of its half-width a revisit may sit off a region near the box edge
+ZOOM_FEATURE_SIZE = (0.25, 2.0)  # feature size per tier, in multiples of its field of view
+ZOOM_WINDOW_SHARE = 1 / 16  # share of the parent's field place_image searches around the aim
+ZOOM_CANDIDATES = 8  # features asked per tier; the first that fits the parent is used
 REGION_FIELDS = ("id", "x_m", "y_m", "score", "reason", "scorer_version", "window_m")
 DRY_RUN_SKIPPED = "skipped (dry run): nothing was acquired and the sample was not exposed; the commands are in the trace with dry_run: true"
 
@@ -105,15 +105,15 @@ class Pipeline:
         arguments = self.stitch_arguments(job, run)
         try:
             stitched = asyncio.run(stitch_map(self._analyse, **arguments, **self._wait_options(job, "stitch_job")))
-        except AnalysisFailed as exc:  # the tiles are safe, the job goes on
+        except AnalysisFailed as exc:  # the tiles are safe; the job goes on
             pipeline["stitch_error"] = f"{exc}. The tiles are in {run}; stitch them later with assemble_map(run={run!r})."
             pipeline.pop("stitch_job", None)
             return {"phase": "stitch", "ok": False}
         if stitched is None:
-            return None  # aborted while stitching, and a resume waits for the same stitch
+            return None  # aborted mid-stitch; a resume waits for the same stitch
         pipeline["map"] = stitched["map"]
         summary = stitched["summary"]
-        pipeline["drift_fit"] = summary.get("drift")  # kept for revisits; the reply shows only its totals
+        pipeline["drift_fit"] = summary.get("drift")  # kept for revisits; the reply shows only totals
         pipeline["stitching"] = {k: v for k, v in summary.items() if k in ("tiles", "levels", "canvas_shape", "matches_used", "median_residual_px", "p95_residual_px", "fallback_tiles", "eds_pois", "solver", "drift_unmeasured")}
         if summary.get("drift"):
             pipeline["stitching"]["drift"] = {k: summary["drift"][k] for k in ("total_nm", "mean_rate_nm_per_s") if k in summary["drift"]}
@@ -193,7 +193,7 @@ class Pipeline:
                     visit["poi"] = poi.get("id")
                     visit.pop("poi_error", None)
                     self._save(job)
-            except Exception as exc:  # the image is saved either way and a later step tries the link again
+            except Exception as exc:  # the image is saved either way; a later step retries the link
                 visit["poi_error"] = f"{type(exc).__name__}: {exc}"
 
     def revisit(self, job: dict, k: int, profile: InstrumentProfile, move: Callable[[dict, float, float], bool]) -> dict | None:
@@ -234,7 +234,7 @@ class Pipeline:
             visit = {"region": region["id"], "image": image_key, "fov_m": fov, "stage_xy_m": [x, y], "clock_s": now, "drift_xy_m": [dx, dy]}
             if job.get("dry_run"):
                 visit = {"region": region["id"], "acquisition": DRY_RUN_SKIPPED, "fov_m": fov, "stage_xy_m": [x, y], "clock_s": now, "drift_xy_m": [dx, dy]}
-            with self._lock:  # saved before the point is added, so a resume links this image instead of taking another
+            with self._lock:  # saved first, so a resume links this image instead of taking another
                 visits.append(visit)
                 self._save(job)
         self.link_pending(job)
@@ -255,7 +255,7 @@ class Pipeline:
         else:
             record = self._zoom_tier(job, k, before["image"] if before else zoom["parent"], tier, profile)
             if record is None:
-                return None  # aborted before imaging, and a resume does this tier again
+                return None  # aborted before imaging; a resume redoes this tier
         with self._lock:
             tiers.append(record)
             self._save(job)

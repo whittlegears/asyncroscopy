@@ -29,7 +29,7 @@ from .progress import done_count, step_count
 
 STOPPABLE_STATES = {"running", "paused_suspended", "paused"}
 RESUMABLE_STATES = {"reserved", "failed", "aborted"}
-SUMMARY_STEPS = 50  # How many step records results returns. The rest stay in the job's steps file.
+SUMMARY_STEPS = 50  # the rest stay in the job's steps file
 
 
 def _has_null(value) -> bool:
@@ -176,17 +176,17 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
 
     def init_device(self) -> None:
         Device.init_device(self)
-        self._generation += 1  # a worker from an earlier generation no longer writes state files
+        self._generation += 1  # an older generation's worker stops writing state files
         self._lock = threading.RLock()
         self._jobs: dict[str, dict] = {}
-        self._unloaded: dict[str, Path] = {}  # finished jobs not read yet, reservation id to progress file
+        self._unloaded: dict[str, Path] = {}  # finished, not read yet: reservation id to progress file
         self._job_index: dict[str, str] = {}
         self._threads: dict[str, threading.Thread] = {}
         self._abort: dict[str, threading.Event] = {}
         self._name = self.get_name()
         self._state_dir = Path(self.state_directory)
         self._state_dir.mkdir(parents=True, exist_ok=True)
-        self._proxies = threading.local()  # each thread keeps its own proxies
+        self._proxies = threading.local()
         self._trace = TraceWriter(
             self.trace_path, source="job", writer=self._name, defaults={"simulated": bool(self.simulated)},
             clock=InstrumentClock(self.trace_clock_device()), may_rotate=self._no_active_job,
@@ -272,7 +272,7 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
             return self._error(exc.code, str(exc))
         except (ValueError, TypeError, KeyError, jsonschema.ValidationError) as exc:
             if isinstance(exc, (TypeError, KeyError)) and fn not in (self._reserve, self._revise):
-                raise  # outside a plan check these are bugs, not a caller's mistake
+                raise  # outside a plan check these are bugs
             if isinstance(exc, (TypeError, KeyError)) and not self._plan_caused(exc, args[0] if args else ""):
                 example = f" Example plan: {json.dumps(self.PLAN_EXAMPLE)}" if self.PLAN_EXAMPLE is not None else ""
                 return self._error("device_error", f"{type(self).__name__}.resolve_plan failed: {type(exc).__name__}: {exc}.{example}")
@@ -295,15 +295,15 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
 
     def _reserve(self, request: str) -> str:
         body = self._parse(request, "plan")
-        try:  # the deployment's risk patterns tell a dry run which commands to record
+        try:  # risk patterns tell a dry run which commands to record
             risk_overrides = check_overrides(body.get("risk_overrides"))
         except (ValueError, AttributeError) as exc:
             raise JobError("bad_request", f"risk_overrides: {exc}") from exc
-        self._refuse_if_busy()  # answer fast for a busy device before reading the instrument
+        self._refuse_if_busy()  # answer a busy device fast before reading the instrument
         plan, dry_run, resolved, shape, limits = self._checked_plan(body["plan"])
         body["plan"] = plan
         with self._lock:
-            self._refuse_if_busy()  # another reserve may have won while this one read the instrument
+            self._refuse_if_busy()  # another reserve may have won meanwhile
             reservation_id = uuid.uuid4().hex[:12]
             job = {
                 "reservation_id": reservation_id,
@@ -322,7 +322,7 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
                 "result_keys": {},
                 "job_ids": [],
                 "caller": body.get("caller"),
-                "run": body.get("run") or None,  # the agent run id the MCP server passes on for the trace
+                "run": body.get("run") or None,  # agent run id from the MCP server, for the trace
                 "last_error": None,
                 "created": time.time(),
                 "trace_offset": self._trace.path.stat().st_size if self._trace.path.exists() else 0,
@@ -330,7 +330,7 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
             try:
                 self._save_plan(job)
                 self._save(job)
-            except OSError:  # leave no half written job for a restart to find
+            except OSError:  # leave no half-written job for a restart
                 for path in (self._plan_path(reservation_id), self._path(reservation_id)):
                     path.unlink(missing_ok=True)
                 raise
@@ -352,10 +352,10 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
         if not isinstance(plan, dict):
             raise JobError("bad_request", "'plan' must be an object")
         plan = dict(plan)
-        dry_run = plan.pop("dry_run", False)  # dry_run belongs to the envelope so resolve_plan never sees it
+        dry_run = plan.pop("dry_run", False)  # envelope field: resolve_plan never sees it
         if not isinstance(dry_run, bool):
             raise JobError("bad_request", f"dry_run must be true or false, got {dry_run!r}")
-        if "drives" in plan:  # auto mode trusts this list to decide the start so only the device may write it
+        if "drives" in plan:  # auto mode trusts this list, so only the device writes it
             raise JobError("bad_request", "drives is not a plan field: the job device works out which commands it drives")
         if dry_run and not getattr(self, "SUPPORTS_DRY_RUN", False):
             raise JobError(
@@ -394,7 +394,7 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
                 raise JobError("bad_state", f"reservation is {job['state']}; only a plan that has not started can be revised")
         plan, dry_run, resolved, shape, limits = self._checked_plan(body["plan"])
         with self._lock:
-            if job["state"] != "reserved":  # started or released while the new plan was checked
+            if job["state"] != "reserved":  # started or released while the plan was checked
                 raise JobError("bad_state", f"reservation is {job['state']}; only a plan that has not started can be revised")
             previous = job["plan_id"]
             job.pop("steps", None)
@@ -451,7 +451,7 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
                 return self._continue(job, body)
             if body.get("plan_id") and body["plan_id"] != job.get("plan_id"):
                 raise JobError("plan_changed", f"the plan was revised (now {job.get('plan_id')}) after this start was asked for {body['plan_id']}; ask again")
-            if body.get("continue"):  # Continue is for a paused job and must not resume one stopped since
+            if body.get("continue"):  # only for a paused job, never one stopped since
                 raise JobError("bad_state", f"job is {job['state']}, not paused; it was not continued")
             if job["state"] not in RESUMABLE_STATES:
                 raise JobError("bad_state", f"reservation is {job['state']}")
@@ -467,10 +467,10 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
                 "pause_requested": False,
             }
             previous = dict(job)
-            self._save(started)  # if this fails, the reservation stays as it was and can be started again
+            self._save(started)  # on failure the reservation stays startable
             job.update(started)
             self._job_index[job_id] = job["reservation_id"]
-            for finished in [j for j, t in self._threads.items() if not t.is_alive()]:  # drop dead workers so a long running server does not collect them
+            for finished in [j for j, t in self._threads.items() if not t.is_alive()]:  # drop dead workers
                 self._threads.pop(finished, None)
                 self._abort.pop(finished, None)
             self._abort[job_id] = threading.Event()
@@ -481,7 +481,7 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
                 thread.start()
                 if job["lease_until"] is not None:
                     threading.Thread(target=self._watch_lease, args=(job, job_id, thread), name=f"lease-{job_id}", daemon=True).start()
-            except Exception:  # the thread could not start so put the reservation back as it was
+            except Exception:  # could not start: put the reservation back
                 for table in (self._job_index, self._abort, self._threads):
                     table.pop(job_id, None)
                 job.clear()
@@ -587,7 +587,7 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
         for job_id in running:
             try:
                 stopped.append(json.loads(self._abort_job(json.dumps({"job_id": job_id}))))
-            except Exception as exc:  # one job that cannot be stopped must not keep the others running
+            except Exception as exc:  # one unstoppable job must not keep the others running
                 stopped.append({"job_id": job_id, "error": f"{type(exc).__name__}: {exc}"})
         self._trace.record(f"{type(self).__name__}.abort_all", True, time.time(), arguments={"job_ids": running})
         return self._reply({"aborted": stopped})

@@ -28,7 +28,7 @@ from asyncroscopy.core.fileio import rotated_paths
 
 RUN_LAYOUT = 2
 RENAME_RETRY_DELAYS_S = (0.0, 0.2, 0.5, 1.0, 2.0)  # on Windows a finished run file may briefly be open elsewhere
-TRACE_LINES_KEPT = 2000  # how many job events are copied into the run file. The rest stay in the shared trace.
+TRACE_LINES_KEPT = 2000  # job events copied into the run file; the rest stay in the shared trace
 PARTIAL = ".partial"
 
 

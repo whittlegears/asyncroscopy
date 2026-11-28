@@ -59,9 +59,9 @@ GENERIC_PLAN_FIELDS = frozenset({
     "dry_run", "box_m", "size_m", "centre_m", "fov_m", "overlap", "order", "label", "stitch", "find_regions", "revisit", "zoom", "budgets", "drift",
 })
 GENERIC_PLAN_DEFAULTS = {"overlap": 0.15, "order": "serpentine", "stitch": True, "find_regions": 0}
-TIME_BUDGET = "time_s"  # every profile can budget the Mapper's estimate of the whole job's duration
-SUMMARY_KEYS_SHOWN = 3  # how many region, revisit or spectrum keys a reply lists
-STAGE_POLL_S = 0.2  # how often a long stage move is checked for arrival and for an abort
+TIME_BUDGET = "time_s"  # the Mapper's estimate of the whole job's duration
+SUMMARY_KEYS_SHOWN = 3  # region, revisit or spectrum keys a reply lists
+STAGE_POLL_S = 0.2  # how often a long stage move is checked for arrival and abort
 
 
 @dataclass

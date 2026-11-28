@@ -49,7 +49,7 @@ def suspender_problem(suspender: dict, value: Any) -> str | None:
         if "min" in suspender or "max" in suspender:
             return f"{label} is {value!r}, not a number"
         return None
-    if "min" in suspender and not number >= suspender["min"]:  # written this way so NaN also counts as bad
+    if "min" in suspender and not number >= suspender["min"]:  # so NaN counts as bad
         return f"{label} is {number:g}, below {suspender['min']:g}"
     if "max" in suspender and not number <= suspender["max"]:
         return f"{label} is {number:g}, above {suspender['max']:g}"
@@ -89,7 +89,7 @@ class SuspenderChecks:
             unsafe = f"{type(exc).__name__}: {exc}"
             self._trace.record(f"{cls}.on_suspend", False, time.time(), job_id=job_id, run_id=job["reservation_id"], error=unsafe, **self._trace_fields(job))
         with self._lock:
-            if job["state"] != "running":  # aborting already
+            if job["state"] != "running":  # already aborting
                 return False
             job["state"] = "paused_suspended"
             if unsafe:
