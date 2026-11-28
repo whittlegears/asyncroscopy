@@ -26,17 +26,12 @@ except ImportError:
 from asyncroscopy import settings
 from asyncroscopy.core.net import is_loopback_host
 
-# Seconds. Turned into the Timeout of whichever HTTP library the installed Tiled client uses,
-# since httpx and httpx2 each accept only their own.
+# Seconds, converted to the Timeout of whichever HTTP library the installed Tiled client uses.
 TIMEOUT_S = {"connect": 3.0, "read": 15.0, "write": 15.0, "pool": 3.0}
 RETRY_DELAYS_S = (0.5,)  # on top of the Tiled client's own two attempts
 URI_CACHE_S = 30.0
 
-# By default the Tiled client retries a connection error for up to 45 s.
-# A dead Tiled would then hang each call longer than the instrument devices
-# and the MCP bridge wait, so keep its retries short.
-# A TILED_RETRY_* set in the environment still wins. Tiled reads the values at
-# import and again at call time, so both are set.
+# Tiled retries a connection error for up to 45 s by default, longer than the devices and the MCP bridge wait.
 os.environ.setdefault("TILED_RETRY_ATTEMPTS", "2")
 os.environ.setdefault("TILED_RETRY_TIMEOUT", "3")
 
@@ -110,8 +105,7 @@ def about(uri: str, timeout_s: float = 2.0) -> dict | None:
     return None
 
 
-# Failures that mean Tiled cannot be reached. OSError is too broad, because FileExistsError,
-# FileNotFoundError and TimeoutError are OSErrors too and mean something else.
+# Not OSError, which also covers FileExistsError, FileNotFoundError and TimeoutError.
 CONNECTION_ERRORS = tuple(
     error for error in (httpx.TransportError, getattr(httpx2, "TransportError", None), ConnectionError) if error is not None
 )

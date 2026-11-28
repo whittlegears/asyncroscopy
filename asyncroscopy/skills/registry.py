@@ -60,7 +60,6 @@ from asyncroscopy import settings
 from asyncroscopy.contracts import ENVELOPE_VERSION
 
 HERE = Path(__file__).resolve().parent
-# What has been read, keyed by the file's size and time, so nothing is read twice while it is unchanged.
 _front_matter: dict[Path, tuple[tuple[int, int], dict, str]] = {}
 _parsed: dict[Path, tuple[tuple[int, int] | None, object]] = {}
 
@@ -182,8 +181,7 @@ def _parse(path: Path) -> Skill:
         new_map=bool(meta.get("new_map", False)),
         enabled=bool(meta.get("enabled", True)),
     )
-    # The skill says whether following it acts on the instrument.
-    # One that does not say counts as acting, just as an unknown command counts as high risk.
+    # A skill that does not say counts as acting, as an unknown command counts as high risk.
     skill.acts = bool(meta["acts"]) if "acts" in meta else True
     installed = _installed_version()
     if skill.min_asyncroscopy and installed and _version_tuple(installed) < _version_tuple(str(skill.min_asyncroscopy)):
@@ -300,7 +298,6 @@ def content_words(text: str) -> set[str]:
     return {_stem(w) for w in re.findall(r"[a-z][a-z0-9]+", text.lower()) if w not in STOP}
 
 
-# The negated word and the one after it, as in "without EDS spectra". Both name what is not wanted.
 NEGATED_WORD = re.compile(r"\b(?:without|no|not|don't|do not|skip)\s+(?:any\s+|an?\s+|the\s+)?[\w-]+(?:\s+[\w-]+)?", re.I)
 
 
@@ -313,7 +310,6 @@ def match_score(skill: Skill, request: str) -> float:
     asked = content_words(NEGATED_WORD.sub(" ", request))
     hits = sum(3.0 for k in skill.keywords if content_words(k) and content_words(k) <= asked)
     named = asked & content_words(skill.name.replace("_", " "))
-    # One shared word is too weak. "take an EDS spectrum" would otherwise match eds_survey.
     if not hits and len(named) < min(2, len(content_words(skill.name.replace("_", " ")))):
         return 0.0
     return hits + 2.0 * len(named) + 0.5 * len(asked & content_words(skill.description))
@@ -331,15 +327,11 @@ def usable_by(skill: Skill, agent_tools: set[str]) -> bool:
     return not skill.tools or any(fnmatch.fnmatchcase(t, p) for p in skill.tools for t in agent_tools)
 
 
-# A request acts on the instrument unless it is clearly read-only. Taking an acting request
-# for read-only keeps the skills it needs away from the agent. The other mistake is safer,
-# since the endpoint's safety policy and limits still apply to every call.
 READ_CUE = re.compile(
     r"\?\s*$|^\s*(?:is|are|was|were|does|do|did|where|when|why|who|show|list|count|read)\b"
     r"|\b(?:what|which|how many|how much|is there|are there|tell me|show me|describe|list the|list all|look at|summari[sz]e|compare|explain)\b",
     re.I | re.M,
 )
-# An instruction to act, anywhere in the request. Past tenses such as "acquired" describe data, not actions.
 ACTION = re.compile(
     r"\b(?:take|taking|acquire|acquiring|capture|capturing|measure|measuring|record|recording|collect|collecting|"
     r"move|moving|go|going|goto|drive|revisit|start|starting|resume|perform|expose|exposing|(?:un)?blank|"
@@ -349,14 +341,12 @@ ACTION = re.compile(
     r"(?:new|another|fresh)\s+(?:area|image|map|spectrum|region|measurement|scan|data))\b",
     re.I,
 )
-# An explicit instruction not to act, such as "do not acquire anything" or "without moving".
 NO_ACTION = re.compile(
     r"\b(?:do not|don't|dont|never|without|no need to)\s+(?:\w+\s+){0,2}?"
     r"(?:acquir\w*|tak\w*|mov\w*|scan\w*|map\w*|measur\w*|imag\w*|expos\w*|touch\w*|start\w*|record\w*|collect\w*)(?:\s+anything)?"
     r"|\bno new (?:data|acquisitions?|measurements?|images?|maps?)\b",
     re.I,
 )
-# A reference to data that already exist, such as a key, "the latest" or "the stitched map".
 EXISTING = re.compile(
     r"\b(?:latest|last|most recent(?:ly)?|recently|stored|existing|earlier|previous|already|acquired|recorded|saved)\b"
     r"|\b[\w\-.]+\.(?:h5|hdf5|hdf|nxs|tiff?)\b|\b\w*\d\w*_map\b|\b(?:the|this|that)\s+(?:stitched\s+)?map\b",
@@ -402,7 +392,6 @@ def skills_text(names: list[str], endpoint_tools: set[str] | None = None, budget
             continue
         body = read_front_matter(skill.path)[1]
         if used + len(body) <= budget:
-            # The heading leaves out the skill's name, because a model may call the name as a tool.
             parts.append(f"=== instructions (not a tool) ===\n{body}")
             used += len(body)
         else:

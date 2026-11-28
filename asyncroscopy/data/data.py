@@ -53,13 +53,8 @@ from tango.server import Device, attribute
 from tiled.client.register import identity, register
 
 ONE_NODE_PER_FILE_WALKER = "tiled.client.register:one_node_per_item"
-# REGISTRABLE_SUFFIXES are the suffixes Tiled 0.2 registers from a file. They come from tiled.mimetypes plus
-# image/tiff from the stdlib. Tiled skips other files silently.
-# register_path answers within about REGISTER_WAIT_SECONDS plus a 2 s check that Tiled
-# answers, well inside the 12 s the instrument devices give DATA. A registration that
-# takes longer carries on in the background, and reconcile catches it if it fails.
+# Well inside the 12 s the instrument devices give DATA; a slower registration carries on in the background.
 REGISTER_WAIT_SECONDS = 8.0
-# How long a background registration may run before it is reported as failed.
 REGISTER_TIMEOUT_SECONDS = 20
 RECENT_WRITE_SECONDS = 10.0  # reconcile leaves files this new alone because they may still be being written
 FUTURE_MTIME_SLACK_SECONDS = 60.0  # a file "modified" further in the future than this has a wrong clock, not a writer
@@ -85,9 +80,7 @@ class DATA(Device):
     def init_device(self) -> None:
         Device.init_device(self)
         self.set_state(DevState.ON)
-        # Tango's Init command runs delete_device then init_device on this same object.
-        # A Tiled the operator had asked for is started again, and the locks carry over,
-        # so nothing from before Init can start a second Tiled alongside the new one.
+        # Tango's Init reruns init_device on this object, so the Tiled state and its locks carry over.
         restart_tiled = getattr(self, "_restart_tiled_after_init", False)
         self._tiled_lock = getattr(self, "_tiled_lock", None) or threading.RLock()
         self._register_lock = getattr(self, "_register_lock", None) or threading.Lock()
@@ -863,9 +856,7 @@ def _live_owner(process) -> str | None:
         return f"a process that cannot be inspected ({type(exc).__name__})"
 
 
-# Tiled writes these directories for the nodes of the analysis server. A map version is named after its run with
-# _map on the end, or with _map, a time and a hex tag. The point store of a run ends in _points. Their files are
-# storage that belongs to Tiled and are never acquisitions to register.
+# Tiled's own storage for the analysis server's maps and point stores, never acquisitions to register.
 TILED_WRITTEN = re.compile(r".+_(?:map(?:_\d{8}T\d{6}(?:\d{3}Z)?_[0-9a-f]{4})?|points)")
 
 

@@ -152,7 +152,6 @@ def search(parts: Sequence[tuple[str, float]], skills: Sequence[Skill], *, k: in
         if text_score <= 0:
             continue  # a passage sharing no word with the query is never chosen for its skill's name alone
         score = text_score + SKILL_WEIGHT * skill_match.get(passage.skill, 0.0) + boost.get(passage.skill, 0.0)
-        # A skill marked matched: false is reached through another skill, so only an event's boost brings its passages.
         if score >= min_score and (by_name[passage.skill].matched or passage.skill in boost):
             scored.append((score, -passage.order, passage))
     scored.sort(key=lambda s: (s[0], s[1]), reverse=True)

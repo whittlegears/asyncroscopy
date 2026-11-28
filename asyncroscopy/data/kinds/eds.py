@@ -32,13 +32,11 @@ from asyncroscopy.data.views import (
     spectrum_image_kind,
 )
 
-# Below WINDOW_RISE_EV an EDS peak must also stand RISE_SIGMA above a smooth curve fitted around it.
-# The detector window bends the continuum into a broad rise near 0.6 keV.
+# The detector window bends the continuum into a broad rise near 0.6 keV, so a peak below it must stand clear of a fitted curve.
 WINDOW_RISE_EV = 1200.0
 RISE_HALF_WIDTHS = 3.0
 RISE_SIGMA = 3.0
 SI_ESCAPE_EV = 1740.0
-# Silicon-drift EDS detector resolution, as the twin models it in twin/eds_model.py.
 EDS_FWHM_MN_KA_EV = 130.0
 MN_KA_EV = 5895.0
 
@@ -93,7 +91,6 @@ def _unlikely_line(name: str, weight: float, peaks_ev: list[float], energy_max_e
     _w, top_energy, top_line = max((w, e, l) for e, l, w in lines if l[0] == line[0])
     if weight < _w and not _seen(top_energy, peaks_ev):
         return f"minor line, no {element} {top_line} peak at {top_energy:.0f} eV"
-    # The element's main family is its K lines when they are in range, else its L lines, else its M lines.
     main = next((f for f in "KLM" if any(l[0] == f and e <= energy_max_ev for e, l, _w in lines)), line[0])
     if line[0] == main:
         return ""
@@ -134,7 +131,6 @@ def _name_peaks(rows: list[PeakRow], x: np.ndarray, y: np.ndarray, axis: Axis, s
 
 
 WINDOW_RISE_NOTE = "unidentified: a broad rise of the continuum (the detector window), not an X-ray line"
-# Detectors whose axis starts below zero show a noise peak at zero energy. No element has a line that low.
 ZERO_PEAK_EV = 60.0
 ZERO_PEAK_NOTE = "the detector's zero-energy noise peak: in every spectrum, not an X-ray line and not an element"
 
@@ -232,8 +228,6 @@ def overlap_note(rows: list[tuple], likely: str) -> str:
     claimed = note_elements(strongest[4]) & ranked
     if not others or not claimed:
         return ""
-    # Only when the ranked element rests on this peak: its other peaks together are weaker than this one. A Pt
-    # spectrum's M peak also fits P, but Pt's L peaks settle it.
     elsewhere = {e: sum(float(r[2]) for r in named if r is not strongest and e in note_elements(r[4])) for e in claimed}
     if all(v >= float(strongest[2]) for v in elsewhere.values()):
         return ""
@@ -244,12 +238,9 @@ def overlap_note(rows: list[tuple], likely: str) -> str:
 def _reading(rows: list[PeakRow], total: float) -> list[str]:
     likely = likely_elements(rows)
     if likely:
-        # The ranking says which elements the peaks point to, strongest first.
-        # It is still only a reading of the peaks, and a light element can hide.
         reading = [f"elements most consistent with these peaks (the share of the peak signal each one explains): {likely}"]
         overlap = overlap_note(rows, likely)
         return reading + [overlap] if overlap else reading
-    # Say so when no peak is a real line, or the data rows get read as lines.
     return [f"no X-ray line of any element detected above noise at this exposure (total {_fmt(total)} counts); "
             "a longer exposure is needed to rule elements out"]
 

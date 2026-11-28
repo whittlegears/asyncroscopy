@@ -485,8 +485,11 @@ class Peak:
 def find_peaks(values: np.ndarray, fwhm_channels: Any = 3.0, limit: int = MAX_PEAKS) -> list[Peak]:
     """Significant peaks, most significant first; none in pure noise.
 
-    For each local maximum, the values within +-FWHM/2 above a running-median background
-    are summed; the sum must exceed PEAK_SIGMA times its noise: sqrt(background summed over
+    The background is the mean of side bands one line width away, from data clipped near a
+    running median: the median alone is biased low for sparse counts, and a plain running mean
+    would count a peak as its own background. Candidates are maxima of the residual smoothed to
+    the line width, so a weak peak is centred by its shape. For each, the values within +-FWHM/2
+    above the background are summed; the sum must exceed PEAK_SIGMA times its noise: sqrt(background summed over
     the same channels) for count data, else the residual's scatter times sqrt(width).
     ``fwhm_channels`` is the expected peak width in channels, one number or one per channel.
     """
@@ -502,9 +505,6 @@ def find_peaks(values: np.ndarray, fwhm_channels: Any = 3.0, limit: int = MAX_PE
     window = int(max(9, 4 * np.median(width), n // 40))
     window = min(window | 1, n - 1 if n % 2 == 0 else n)
     counts = data.min() >= 0 and np.allclose(data, np.round(data))
-    # The background is the mean of side bands one line width away on each side, taken from data
-    # clipped near a running median. The median alone is biased low for sparse counts, which
-    # turns noise into peaks. A plain running mean would count a peak as its own background.
     rough = median_filter(data, size=window, mode="nearest")
     rough_scatter = 1.4826 * float(np.median(np.abs(data - rough))) or 1e-12
     clipped = np.minimum(data, rough + 3.0 * (np.sqrt(np.maximum(rough, 1.0)) if counts else rough_scatter))
@@ -523,8 +523,6 @@ def find_peaks(values: np.ndarray, fwhm_channels: Any = 3.0, limit: int = MAX_PE
     scatter = max(1.4826 * float(np.median(np.abs(residual - np.median(residual)))), 1e-6 * float(data.max() - data.min()))
     summed_residual = np.concatenate(([0.0], np.cumsum(residual)))
     summed_background = np.concatenate(([0.0], np.cumsum(background)))
-    # Candidates are maxima of the residual smoothed to the expected line width,
-    # so a weak peak is centred by its shape and not by its noisiest channel.
     smoothed = gaussian_filter1d(residual, sigma=max(0.5, float(np.median(width)) / 2.355), mode="nearest")
     candidates, _ = scipy_peaks(smoothed, distance=max(1, int(np.median(width) // 2)))
     peaks = []
@@ -533,7 +531,6 @@ def find_peaks(values: np.ndarray, fwhm_channels: Any = 3.0, limit: int = MAX_PE
         lo, hi = max(0, i - half), min(n, i + half + 1)
         net = summed_residual[hi] - summed_residual[lo]
         channels, under = hi - lo, summed_background[hi] - summed_background[lo]
-        # The background under the peak is itself an estimate from the taken channels, so add its variance.
         spread = 1.0 + channels / max(int(taken[i]), 1)
         if counts:  # exact Poisson tail as a z-score, since sparse counts have heavier tails than a Gaussian
             expected = max(under, 0.5)
@@ -547,9 +544,6 @@ def find_peaks(values: np.ndarray, fwhm_channels: Any = 3.0, limit: int = MAX_PE
 
 def _real(ds: Dataset) -> bool:
     return ds.dtype.kind in "uifcb"
-
-
-# 1-D spectra and profiles
 
 
 PeakRow = tuple[float, float, float, int, str]  # position, net, sigma, index and note
@@ -689,9 +683,6 @@ def _strings_text(ds: Dataset, opts: ViewOptions) -> tuple[str, str]:
         values, read = list(_read(ds, slices).reshape(-1)), "read " + _describe_slices(slices)
     texts = [v.decode("utf-8", "replace") if isinstance(v, bytes) else str(v) for v in values]
     return "\n".join([f"{list(ds.shape)} text entries; the first {len(texts)}:"] + [t[:300] for t in texts]), read
-
-
-# 2-D and up
 
 
 def image_kind(name: str, matches: Callable[[Dataset], bool], description: str = "", colormap: str | None = None) -> Kind:
@@ -1010,5 +1001,5 @@ def summarize(node: Any, key: str) -> dict:
     return entry
 
 
-# The domain kinds that ship with asyncroscopy register themselves. Imported last because they build on everything above.
+# Imported last, because the shipped kinds build on everything above.
 from asyncroscopy.data.kinds import eds as _eds  # noqa: E402,F401

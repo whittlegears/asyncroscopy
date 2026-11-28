@@ -79,7 +79,7 @@ def save_acquisition(
     if not data_list:
         raise ValueError("save_acquisition called with no data to save (empty detector/data list)")
     attrs_list = dataset_attrs if isinstance(dataset_attrs, list) else [dataset_attrs] * len(data_list)
-    # Use the value init_device stored and do not call device.get_name here. A device object made without Tango's own initialisation crashes on that call.
+    # Never device.get_name here: a device made without Tango's own initialisation crashes on it.
     instrument_id = getattr(device, "instrument_id", None) or type(device).__name__
     sample = current_sample(sample_of(device))
     role = _role()
@@ -226,7 +226,6 @@ def save_acquisition_hdf5(path: str | Path, datasets: list[dict], file_attrs: di
             h5.attrs[key] = value if isinstance(value, (str, int, float, bool, np.number)) else json.dumps(value)
 
         for item in datasets:
-            # AutoScript AdornedImage objects.
             source = item.get("source", item.get("data"))
             data = source.data if hasattr(source, "data") and not isinstance(source, np.ndarray) else source
             name = item["name"]
