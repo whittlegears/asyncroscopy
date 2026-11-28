@@ -1,8 +1,10 @@
 import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import tango
 
+from asyncroscopy.instruments.electron_microscope.hardware.corrector import CORRECTOR
 from asyncroscopy.instruments.electron_microscope.hardware.corrector_ceos import CEOSCorrector
 
 
@@ -39,6 +41,57 @@ def test_simulation_coefficients_are_absolute_and_validate_shape(corrector_proxy
     coefficients["C1"] = [1.0, 2.0]
     with pytest.raises(tango.DevFailed):
         corrector_proxy.set_aberrations_coeff_sim(json.dumps(coefficients))
+
+
+def test_last_aberrations_is_empty_until_a_tableau_is_measured(corrector_proxy):
+    corrector_proxy.Init()
+    assert corrector_proxy.last_aberrations == ""
+
+    corrector_proxy.measure_c1a1()
+    assert corrector_proxy.last_aberrations == ""
+
+
+def test_tableau_records_last_aberrations_as_reported_with_time_and_command(corrector_proxy):
+    before = datetime.now(timezone.utc)
+    response = json.loads(corrector_proxy.acquire_tableau("Fast 1"))
+
+    record = json.loads(corrector_proxy.last_aberrations)
+
+    assert record["aberrations"] == response["result"]["aberrations"]
+    assert record["command"] == "acquire_tableau"
+    measured_at = datetime.fromisoformat(record["measured_at"])
+    assert before - timedelta(seconds=1) <= measured_at <= datetime.now(timezone.utc)
+
+
+class Recorder:
+    _last_aberrations = None
+
+
+def test_ceos_tableau_response_is_recorded_verbatim():
+    reported = {"C1": [1.5e-9], "A1": [2.0e-9, -3.0e-9], "C3": [1.2e-6]}
+    wire = CEOSCorrector._encode_netstring({"jsonrpc": "2.0", "id": 4, "result": {"aberrations": reported}})
+    device = Recorder()
+
+    CORRECTOR._record_aberrations(device, CEOSCorrector._decode_netstring(wire), "acquire_tableau")
+
+    assert device._last_aberrations["aberrations"] == reported
+    assert device._last_aberrations["command"] == "acquire_tableau"
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        json.dumps({"jsonrpc": "2.0", "id": 5, "error": {"code": -1, "message": "no beam"}}),
+        json.dumps({"jsonrpc": "2.0", "id": 6, "result": {"aberrations": {}}}),
+        "not json",
+    ],
+)
+def test_responses_without_aberrations_are_not_recorded(response):
+    device = Recorder()
+
+    CORRECTOR._record_aberrations(device, response, "acquire_tableau")
+
+    assert device._last_aberrations is None
 
 
 def test_ceos_netstring_codec_round_trip():

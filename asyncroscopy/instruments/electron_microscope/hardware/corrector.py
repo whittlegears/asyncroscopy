@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from abc import abstractmethod
+from datetime import datetime, timezone
 from typing import Any
 
 from tango import AttrWriteType, DevState, DevString
@@ -25,15 +26,28 @@ class CORRECTOR(Device):
         doc="Last backend status string",
     )
 
+    last_aberrations = attribute(
+        label="Last measured aberrations",
+        dtype=str,
+        access=AttrWriteType.READ,
+        doc="JSON of the last measured aberrations, as the backend reported them, with "
+            "measured_at (UTC) and the command that measured them. Empty until a "
+            "measurement in this server's lifetime.",
+    )
+
     def init_device(self) -> None:
         Device.init_device(self)
         self.set_state(DevState.INIT)
         self._last_status = "Initialising"
         self._simulation_aberrations: dict[str, Any] = {}
+        self._last_aberrations: dict[str, Any] | None = None
         self._connect_backend()
 
     def read_status_message(self) -> str:
         return self._last_status
+
+    def read_last_aberrations(self) -> str:
+        return json.dumps(self._last_aberrations) if self._last_aberrations else ""
 
     @command(dtype_out=DevString)
     def get_info(self) -> str:
@@ -45,7 +59,9 @@ class CORRECTOR(Device):
         if len(parts) != 2:
             raise ValueError("acquire_tableau expects '<type> <angle>'")
         tab_type, angle = parts
-        return self._acquire_tableau(tab_type, float(angle))
+        response = self._acquire_tableau(tab_type, float(angle))
+        self._record_aberrations(response, "acquire_tableau")
+        return response
 
     @command(dtype_out=DevString)
     def measure_c1a1(self) -> str:
@@ -74,6 +90,21 @@ class CORRECTOR(Device):
     @command(dtype_out=str)
     def get_aberrations_coeff_sim(self) -> str:
         return json.dumps(self._get_simulation_aberrations())
+
+    def _record_aberrations(self, response: str, command_name: str) -> None:
+        """Keep the aberrations a measurement response reports, exactly as reported."""
+        try:
+            result = json.loads(response).get("result")
+        except (json.JSONDecodeError, AttributeError):
+            return
+        aberrations = result.get("aberrations") if isinstance(result, dict) else None
+        if not isinstance(aberrations, dict) or not aberrations:
+            return
+        self._last_aberrations = {
+            "aberrations": aberrations,
+            "measured_at": datetime.now(timezone.utc).isoformat(),
+            "command": command_name,
+        }
 
     def _set_simulation_aberrations(self, coefficients: dict[str, Any]) -> None:
         self._simulation_aberrations = coefficients

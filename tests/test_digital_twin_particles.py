@@ -31,6 +31,13 @@ def test_particle_twin_saves_haadf_with_world_metadata(
         assert json.loads(image.attrs["world_shape"]) == [48, 48, 24]
 
 
+def test_particle_twin_without_a_corrector_leaves_aberrations_out(particles_twin_proxy, scan_proxy):
+    scan_proxy.imsize = 48
+
+    with h5py.File(particles_twin_proxy.acquire_scanned_image(["HAADF"]), "r") as h5:
+        assert "measured_aberrations" not in h5["image/HAADF"].attrs
+
+
 def test_particle_twin_stage_tilt_recooks_projection(
     particles_twin_proxy,
     scan_proxy,

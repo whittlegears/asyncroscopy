@@ -51,6 +51,15 @@ def _write_tiff(source, path: Path, attrs: dict | None = None) -> None:
         tifffile.imwrite(str(path), np.asarray(array), description=json.dumps(attrs) if attrs else None)
 
 
+def _device_attrs(device) -> dict:
+    """Metadata the acquiring device adds to every dataset, e.g. measured aberrations."""
+    try:
+        read_attrs = device.measured_aberrations_attrs
+    except AttributeError:
+        return {}
+    return read_attrs()
+
+
 def save_acquisition(
     device,
     data_server,
@@ -74,6 +83,8 @@ def save_acquisition(
     if not data_list:
         raise ValueError("save_acquisition called with no data to save (empty detector/data list)")
     attrs_list = dataset_attrs if isinstance(dataset_attrs, list) else [dataset_attrs] * len(data_list)
+    device_attrs = _device_attrs(device)
+    attrs_list = [{**device_attrs, **(attrs or {})} for attrs in attrs_list]
 
     if output_format == ".tiff":
         save_dir = data_server.save_path if data_server is not None else DEFAULT_ACQUISITION_DIR

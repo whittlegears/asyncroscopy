@@ -107,6 +107,22 @@ class ElectronMicroscope(Instrument):
     def read_stem_mode(self) -> bool:
         return self._stem_mode
 
+    def measured_aberrations_attrs(self) -> dict:
+        """Return the corrector's last measured aberrations as acquisition metadata.
+
+        Empty when no corrector is configured or it has measured nothing in its
+        server's lifetime, so acquisitions never carry assumed aberrations.
+        """
+        corrector = self._detector_proxies.get("corrector")
+        if corrector is None:
+            return {}
+        try:
+            record = corrector.last_aberrations
+        except tango.DevFailed as exc:
+            self.error_stream(f"Could not read the corrector's last aberrations: {exc}")
+            return {}
+        return {"measured_aberrations": json.loads(record)} if record else {}
+
     @command
     def Disconnect(self) -> None:
         """Disconnect from microscope hardware gracefully."""

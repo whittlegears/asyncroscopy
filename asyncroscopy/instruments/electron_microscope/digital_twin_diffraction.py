@@ -69,6 +69,7 @@ class DigitalTwinDiffraction(DigitalTwin):
             'camera': self.camera_device_address,
             'scan': self.scan_device_address,
             'stage': self.stage_device_address,
+            'corrector': self.corrector_device_address,
             'data': self.data_device_address,
         }
         for name, address in addresses.items():

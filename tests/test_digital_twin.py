@@ -56,6 +56,26 @@ class TestDigitalTwin:
             assert h5["image/HAADF"].attrs["acquisition_type"] == "stem_image"
             assert h5["image/HAADF"].attrs["detector"] == "HAADF"
 
+    def test_acquisitions_carry_only_measured_aberrations(
+        self,
+        twin_proxy: tango.DeviceProxy,
+        scan_proxy: tango.DeviceProxy,
+        corrector_proxy: tango.DeviceProxy,
+    ):
+        import json
+
+        scan_proxy.imsize = 16
+        corrector_proxy.Init()
+        with h5py.File(twin_proxy.acquire_scanned_image(["haadf"]), "r") as h5:
+            assert "measured_aberrations" not in h5["image/HAADF"].attrs
+
+        corrector_proxy.acquire_tableau("Fast 1")
+        record = json.loads(corrector_proxy.last_aberrations)
+        with h5py.File(twin_proxy.acquire_scanned_image(["haadf"]), "r") as h5:
+            assert json.loads(h5["image/HAADF"].attrs["measured_aberrations"]) == record
+        with h5py.File(twin_proxy.acquire_spectrum("eds"), "r") as h5:
+            assert json.loads(h5["spectrum"].attrs["measured_aberrations"]) == record
+
     def test_stage_navigation_changes_and_restores_view(
         self,
         twin_proxy: tango.DeviceProxy,

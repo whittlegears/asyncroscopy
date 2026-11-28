@@ -22,6 +22,29 @@ raw-array vendors get the dict json-encoded into the TIFF `ImageDescription` tag
 Acquisition commands that feed this pipeline include `acquire_scanned_image`,
 `acquire_spectrum`, `acquire_camera_image`, and `acquire_scanned_data_advanced`.
 
+### Measured aberrations
+
+When the microscope has a corrector (`corrector_device_address`) and that
+corrector has run `acquire_tableau` since its server started, every dataset the
+microscope saves carries a `measured_aberrations` attribute. It is the
+corrector's `last_aberrations` attribute, JSON-encoded:
+
+```json
+{
+  "aberrations": {"C1": [1.5e-9], "A1": [2.0e-9, -3.0e-9], "...": []},
+  "measured_at": "2026-11-28T14:03:11.402518+00:00",
+  "command": "acquire_tableau"
+}
+```
+
+`aberrations` is the `result.aberrations` object of the tableau response,
+unchanged: the names and values are exactly what the CEOS server (or
+`DigitalTwinCorrector`) reported. `measured_at` is the UTC time the tableau
+returned. With no corrector configured, or no tableau measured yet, the attribute
+is left out; it is never filled with zeros or assumed values. For `.tiff`, raw-array
+vendors get it in the `ImageDescription` JSON; AutoScript adorned images save
+their own metadata and do not carry it.
+
 What a command returns — and how you read it back — depends on the format:
 
 - **`.h5`** (default): returns one Tiled key, read nested.
