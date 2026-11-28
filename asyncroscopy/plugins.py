@@ -123,5 +123,4 @@ class Plugins:
         return ""
 
 
-# The process's plug-ins. Every Registry imports through this one object, so each entry is tried once.
 PLUGINS = Plugins()

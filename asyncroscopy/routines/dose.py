@@ -9,9 +9,6 @@ from __future__ import annotations
 import math
 
 ELECTRON_CHARGE = 1.602176634e-19
-# The side in metres of the square around the spot over which a parked beam's dose is counted.
-# The probe is far smaller, and 10 nm is a typical damage and contamination spread.
-# The Mapper's budget, the dose ledger and the twin's dose map all use it, so they cannot disagree.
 EDS_DOSE_SPREAD_M = 1e-8
 
 

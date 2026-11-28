@@ -31,7 +31,6 @@ def grid_axes(box: list[float], fov: float, overlap: float, limit: int | None = 
             raise ValueError(f"plan needs more than {limit} tiles; this Mapper allows at most {limit}")
         if n == 1:
             return np.array([(lo + hi) / 2.0])
-        # Spread the tiles evenly so the last one ends exactly at the box edge.
         return np.linspace(lo + side / 2.0, hi - side / 2.0, n)
 
     xs, ys = axis(x_min, x_max, fov), axis(y_min, y_max, fov if fov_y is None else fov_y)

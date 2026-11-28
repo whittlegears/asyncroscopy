@@ -83,10 +83,7 @@ class DoseMap:
         cell = self._cell_m(level)
         per_a2 = electrons_per_pixel / (pixel_m * pixel_m * ANGSTROM2_PER_M2)
         rows, cols = self._cells(level, xs, ys)
-        # One integer per cell, because a 1-D unique is far faster than a unique over row and col pairs.
         keys, hits = np.unique((rows + KEY_HALF) * KEY_SPAN + (cols + KEY_HALF), return_counts=True)
-        # Each cell gets the frame's dose times its pixels over the pixels a full cell holds,
-        # so every electron is counted once.
         pixels_per_cell = (cell / pixel_m) ** 2
         cells = self.levels[level]
         for key, n in zip(keys.tolist(), hits.tolist()):

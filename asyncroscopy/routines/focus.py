@@ -64,7 +64,6 @@ def smoothed_gradient_energy(image: ArrayLike) -> float:
         return 0.0
     dx = np.diff(smooth, axis=1)
     dy = np.diff(smooth, axis=0)
-    # The box filter leaves 1/9 of the Poisson variance, correlated over 3 pixels. That is about 2/27 of the mean per difference.
     energy = 0.5 * (float((dx * dx).mean()) + float((dy * dy).mean()))
     return max(0.0, energy - 2.0 * mean / 27.0) / (mean * mean)
 
@@ -163,7 +162,6 @@ def search_1d(
             break
         xs, ys = sweep(evaluate, low, high, fine_points)
         samples += zip(xs, ys)
-        # Fit the whole fine sweep. It spans the peak evenly, which cancels most of the noise.
         vertex = parabola_vertex(xs, ys)
         estimate = float(min(max(vertex, low), high)) if vertex is not None else peak_estimate(xs, ys)
         window *= float(shrink)
@@ -189,7 +187,6 @@ def search_2d(
     for _ in range(max(1, passes)):
         for axis in (0, 1):
             here, bounds = (a, a_bounds) if axis == 0 else (b, b_bounds)
-            # Keep each pass inside the original box.
             low, high = max(bounds[0], here - span), min(bounds[1], here + span)
             mid, half = (low + high) / 2.0, (high - low) / 2.0
             if axis == 0:

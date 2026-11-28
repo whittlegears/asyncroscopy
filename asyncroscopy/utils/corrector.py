@@ -7,8 +7,6 @@ third_order  = ['C3', 'S3', 'A3']
 fourth_order = ['A4', 'D4', 'B4']
 all_keys     = first_order + second_order + third_order + fourth_order
 
-# C1, C3 are scalar — Tango server expects "KEY x" (one float).
-# All others are 2-component — expects "KEY x y".
 SCALAR_KEYS = {'C1', 'C3'}
 
 thresholds = {

@@ -234,14 +234,14 @@ class TraceStream:
         return {f.ino for f in self._files.values() if f.ino and f is not but} | set(self._retired)
 
     def _find_new_files(self) -> None:
+        """Start following new files. A rotated file renamed to a matching name keeps its first name; only a
+        rotated name is skipped, because a new live log may reuse the inode of a deleted rotated file."""
         self._expanded_at = time.monotonic()
         tracked = self._tracked_inos()
         for path in _expand(self.sources):
             if str(path) in self._files:
                 continue
             st = _stat(path)
-            # A rotated file renamed to a name the sources match is read under its first name.
-            # Only a rotated name counts, because a new live log may reuse the inode of a deleted rotated file.
             if st is not None and st.st_ino and st.st_ino in tracked and _logical(path) != path.name:
                 continue
             self._files[str(path)] = _File(path)
@@ -266,8 +266,7 @@ class TraceStream:
                     if st is None:
                         return
                     if st.st_ino and st.st_ino in self._tracked_inos(but=f) and _logical(f.path) != f.path.name:
-                        # A file already read under another name was rotated onto this one.
-                        # Its owner reads what is left of it, and this name takes it as read.
+                        # Read already under another name: its owner reads the rest, and this name takes it as read.
                         f.ino, f.head, f.read_off, f.known = st.st_ino, self._head(f.path), st.st_size, True
                         if not f.pending:  # otherwise the cursor moves on when the old file's last events are handed out
                             f.committed = self._commit(f, st.st_size, None, f.last_t)
@@ -289,7 +288,6 @@ class TraceStream:
         if f.ino:
             self._retired.append(f.ino)
             del self._retired[:-RETIRED_KEPT]
-        # The new file is read from its first line. Its seq may restart if the rotation also moved the .seq sidecar.
         f.ino, f.head, f.read_off, f.known, f.read_seq = 0, b"", 0, False, None
 
     def _find_rotated(self, f: _File) -> Path | None:

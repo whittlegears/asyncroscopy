@@ -100,10 +100,10 @@ def unmeasured(profile: dict) -> list[str]:
 
 
 def _draw(entry: dict, rng: np.random.Generator, across: bool) -> float:
-    """One parameter's value: from its range (``across``) or from value +/- sigma, kept inside the range."""
+    """One parameter's value: from its range (``across``) or from value +/- sigma, kept inside the range.
+    A range wider than a decade is drawn evenly in the logarithm."""
     low, high = entry.get("range", (-np.inf, np.inf))
     if across and "range" in entry:
-        # Ranges that span more than a decade are drawn evenly in the logarithm, so small values are as likely as large ones.
         if low > 0 and high / low > 10:
             return float(np.exp(rng.uniform(np.log(low), np.log(high))))
         return float(rng.uniform(low, high))

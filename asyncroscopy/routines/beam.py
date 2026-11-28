@@ -43,7 +43,6 @@ def beam_path_blocked(parameters: dict) -> str | None:
     if str(parameters.get("screen", "")).strip().lower() == "inserted":
         return "the fluorescent screen is inserted, so no beam reaches the scanning detectors: retract it (set_screen 'retracted')"
     return None
-# The current a microscope assumes until it has measured one.
 DEFAULT_BEAM_CURRENT_PA = 50.0
 
 
@@ -97,7 +96,6 @@ def beam_current(parameters: dict, simulated: bool, max_age_s: float = DEFAULT_M
                 else "the microscope does not say the current was measured (no beam_current_source)"
             )
     if not (math.isfinite(pa) and pa > 0):
-        # Never usable, simulated or not, because a zero or negative current makes every dose zero.
         return BeamCurrent(pa, source, age, simulated, f"beam_current_pa {parameters.get('beam_current_pa')!r} is not a current > 0")
     if simulated:
         return BeamCurrent(pa, source, age, simulated, None)
@@ -121,7 +119,7 @@ def usable_beam_current(parameters: dict, simulated: bool, max_age_s: float = DE
     return current
 
 
-# How far the current may rise between reserve and start before the dose budget no longer holds.
+# The largest rise in current between reserve and start that keeps the dose budget valid.
 START_CURRENT_TOLERANCE = 0.05
 
 

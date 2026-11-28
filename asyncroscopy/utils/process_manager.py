@@ -246,7 +246,6 @@ class ProcessManager:
         self.state_file = self.state_dir / f"{self.name}.json"
         self.timeout = timeout
         self.max_output_lines = max_output_lines
-        # Also print the output lines of each child with its key in front. Containers that collect stdout need this.
         self.echo_output = echo_output
 
         self.active_processes: list[ManagedProcess] = []
@@ -294,7 +293,7 @@ class ProcessManager:
         prefix = f"[{key}] " if self.echo_output else None
         self._drain(proc.stdout, managed.stdout_lines, prefix)
         self._drain(proc.stderr, managed.stderr_lines, prefix)
-        # Persisted immediately, not just on stop: if this process dies
+        # Saved now, so the next launch can reap this PID if the launcher dies.
         # ungracefully (crash, force-kill), the next launch's
         # _cleanup_stale_state() needs its PID on disk to find and reap it.
         self.save()
@@ -345,9 +344,9 @@ class ProcessManager:
             self.save()
 
     def shutdown_all(self) -> None:
-        """Performs a fast, concurrent shutdown of every tracked process."""
+        """Performs a fast, concurrent shutdown of every tracked process. Ctrl+C is ignored meanwhile, so a second
+        press does not abort the cleanup."""
         old_handler = None
-        # Temporarily ignore Ctrl+C so a second press doesn't abort the cleanup
         if threading.current_thread() is threading.main_thread():
             try:
                 old_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -366,7 +365,6 @@ class ProcessManager:
                 if proc.poll() is not None:
                     continue
 
-                # Past the shared timeout, still give a process that is exiting a moment before the kill.
                 elapsed = time.time() - start_time
                 rem = max(0.1, self.timeout - elapsed)
 

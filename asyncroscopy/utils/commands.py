@@ -92,8 +92,6 @@ def command(f: Callable[..., Any] | None = None, *, risk: str | None = None, ope
             options["display_level"] = DispLevel.EXPERT
         if not options.get("doc_out"):
             options["doc_out"] = summary(func)
-        # The MCP server names the tool's argument from the param line of doc_in.
-        # Take the name from the Python signature when doc_in does not give one.
         params = [p for p in inspect.signature(func).parameters.values() if p.name != "self"]
         doc_in = options.get("doc_in") or ""
         if params and options.get("dtype_in") is not None and ":param " not in doc_in:

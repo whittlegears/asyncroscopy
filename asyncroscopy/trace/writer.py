@@ -57,8 +57,8 @@ class ToolCallLog:
         error: BaseException | None = None,
         **context: Any,
     ) -> None:
-        """One line per call. ``context``: e.g. caller and run, written when not None."""
-        # Never let a logging failure fail the device call.
+        """One line per call. ``context``: e.g. caller and run, written when not None. A logging failure never
+        fails the device call."""
         try:
             row = {
                 "ts": started,
@@ -125,7 +125,6 @@ class TraceWriter:
         }
         for key, value in {**self.defaults, **fields}.items():
             if key == "result" and value is not None:
-                # JSON and not Python repr, so analysis code can parse previews that were not cut short.
                 value = (value if isinstance(value, str) else json.dumps(_json_safe(value), default=str))[:RESULT_PREVIEW_CHARS]
             if key == "run" and not value:
                 continue  # no agent run known, so leave it out rather than write null

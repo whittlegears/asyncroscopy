@@ -38,8 +38,6 @@ from asyncroscopy.trace.writer import TraceWriter
 ACTION = "instrument.state"
 DEFAULT_LOG = Path("outputs/trace/state.jsonl")
 
-# Each reading: the name it is logged under, and the command (called with no argument) or attribute that gives it.
-# All of them only read.
 READINGS = {
     "stage": ("command", "get_stage"),  # [x, y, z (m), alpha, beta (deg)] as the stage reports it
     "defocus_m": ("command", "get_defocus"),
