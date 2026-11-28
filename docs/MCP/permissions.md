@@ -7,8 +7,9 @@ releases a held call on the operator endpoint. An app only shows the held call a
 ## Deviations from the 2026-11-28 contract
 
 - **Stops and the contract tools are never held.** `endpoint_info`, `action_space`, `find_tools`, `call_tool`
-  (it is checked on the tool it runs), `stop_all`, and every command whose role is a stop (`beam.blank`,
-  `probe.retract`, `safe_stop`) or that declares `stop`, always run. Their permission is `allow` with
+  (it is checked on the tool it runs), `stop_all`, and every command that declares `stop` or declares a stop role
+  (`beam.blank`, `probe.retract`, `safe_stop`), always run. A stop role the name rules inferred is not enough, so a
+  command such as `gun_off` with no declaration is permissioned like any other. Their permission is `allow` with
   `source: "fixed"` and `settable: false`. Without this, setting the `reads` group to `approve` would hold
   `endpoint_info`, and no client could even read the endpoint; holding an emergency stop for a person is unsafe.
 - **The permissions file has a `groups` and a `tools` section** under each `stack_id`:

@@ -24,9 +24,16 @@ from asyncroscopy.safety.permissions import PermissionStore, effective_permissio
 from asyncroscopy.safety.policy import hard_blocked
 
 if TYPE_CHECKING:
+    from asyncroscopy.mcp.descriptors import ToolDescriptor
     from asyncroscopy.mcp.mcp_server import MCPServer, ServerConfig
 
 always_run = frozenset({"endpoint_info", "action_space", "find_tools", "call_tool", "stop_all"})
+
+
+def always_runs(t: ToolDescriptor) -> bool:
+    """Whether a tool is never held: the endpoint's contract tools, stop_all, and a command that declares it is a
+    stop (``stop``) or declares a stop role. A role the name rules inferred (``gun_off`` reads as a stop) is not enough."""
+    return t.name in always_run or t.stop or (t.role_source == "annotation" and t.action_role in STOP_ROLES)
 
 
 def listed_in(rules: dict[str, list[str]], dev_class: str, command: str) -> bool:
@@ -95,7 +102,7 @@ class Permissions:
         return {"acts": t.acts, "risk": t.risk, "description": description.splitlines()[0][:300] if description else "",
                 "needs_approval": device_command and listed_in(self.needs_approval, t.dev_class, t.command),
                 "never": device_command and hard_blocked(t.dev_class, t.command),
-                "fixed": name in always_run or t.stop or t.action_role in STOP_ROLES}
+                "fixed": always_runs(t)}
 
     def catalog(self) -> dict[str, dict[str, Any]]:
         return {name: self.entry(name) for name in sorted(self.server.descriptors) if name in self.server.registered}

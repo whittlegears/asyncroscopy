@@ -151,6 +151,21 @@ def test_a_held_call_is_matched_on_its_validated_arguments(stack):
     assert {p["request_id"] for p in agent.permissions.store.pending()} == {held["request_id"], listed["request_id"]}
 
 
+def test_only_a_declared_stop_is_never_held():
+    from asyncroscopy.mcp.components.permissions import always_runs
+    from asyncroscopy.mcp.descriptors import DeviceInfo, describe_command, describe_native
+
+    device = DeviceInfo("Gun", "Gun", hints={"blank_beam": {"role": "beam.blank"}, "halt": {"stop": True}})
+
+    def described(command):
+        return describe_command(device, command, overrides={}, routine=None, warnings=[])
+
+    assert described("gun_off").action_role in ("beam.blank", "safe_stop")
+    assert [always_runs(described(c)) for c in ("gun_off", "hv_off", "emission_off")] == [False, False, False]
+    assert always_runs(described("blank_beam")) and always_runs(described("halt"))
+    assert always_runs(describe_native("stop_all")) and not always_runs(describe_native("run_job"))
+
+
 def test_never_cannot_be_set_and_disconnect_is_never_run(stack):
     agent = stack("agent", TWIN)
     operator = stack("operator", TWIN)
