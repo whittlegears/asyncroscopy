@@ -39,6 +39,9 @@ class TwinBlanker:
     def _unblank_beam(self) -> None:
         self._blanked = False
 
+    def _beam_blanked(self) -> bool:
+        return bool(self._blanked)
+
     def _beam_signal(self, data):
         """``data`` (what the beam put on a detector), or zeros of its shape while the beam is blanked."""
         return np.zeros_like(np.asarray(data)) if self._blanked else data

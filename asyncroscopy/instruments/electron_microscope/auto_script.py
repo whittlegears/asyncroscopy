@@ -534,7 +534,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         e-stop), is blanked again after it, even when it fails. An acquisition may open the blanker; the save that
         follows must not leave the beam parked on the sample. A beam that was unblanked is otherwise left as it is
         (the caller opened it, and closes it)."""
-        was_blanked = bool(self._microscope.optics.blanker.is_beam_blanked)
+        was_blanked = self._beam_blanked()
         blanks_before = self._blank_count
         try:
             yield
@@ -771,7 +771,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
                 'projector_mode': optics.projector_mode,
                 'spot_size': optics.spot_size_index,
                 'beam_stopper': optics.beam_stopper.insertion_state,
-                'beam_blanker': optics.blanker.is_beam_blanked,
+                'beam_blanker': self._beam_blanked(),
                 'auto_beam_blank_mode': self._read(lambda: str(optics.blanker.auto_beam_blank.mode.value)),
                 'is_eftem_on': optics.is_eftem_on,
                 **self._optics_readout(),
@@ -832,7 +832,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         if not self._is_stem():
             raise ValueError("run_stem_auto_focus runs in STEM mode only (AutoScript); nothing was run")
         results = self._microscope.auto_functions.run_stem_auto_focus(_settings(RunStemAutoFocusSettings, fields, STEM_AUTO_FOCUS_FIELDS))
-        return {"defocus_m": float(results.defocus), "astigmatism_m": float(results.astigmatism), "beam_blanked": self._beam_blanked_now()}
+        return {"defocus_m": float(results.defocus), "astigmatism_m": float(results.astigmatism), "beam_blanked": self._beam_blanked()}
 
     def _run_beam_tilt_auto_focus(self, fields: dict) -> dict:
         if self._is_stem():
@@ -840,11 +840,16 @@ class AutoScriptMicroscope(ElectronMicroscope):
         results = self._microscope.auto_functions.run_beam_tilt_auto_focus(_settings(RunBeamTiltAutoFocusSettings, fields, BEAM_TILT_AUTO_FOCUS_FIELDS))
         drift = None if results.drift is None else [float(results.drift.x), float(results.drift.y)]
         return {"defocus_m": float(results.defocus), "astigmatism_m": float(results.astigmatism), "drift_m": drift,
-                "beam_blanked": self._beam_blanked_now()}
+                "beam_blanked": self._beam_blanked()}
 
-    def _beam_blanked_now(self) -> bool:
-        """The blanker as AutoScript reads it now: a vendor routine may leave the beam open, and the reply says so."""
-        return bool(self._microscope.optics.blanker.is_beam_blanked)
+    def _beam_blanked(self) -> bool:
+        """The blanker as AutoScript reads it now (get_parameters, beam_state, and the vendor routines' replies: one
+        may leave the beam open, and the reply says so)."""
+        return bool(self._client("reading the blanker").optics.blanker.is_beam_blanked)
+
+    def _manufacturer_name(self) -> str:
+        """AutoScript TEM is Thermo Fisher Scientific's API and drives only its microscopes."""
+        return "Thermo Fisher Scientific"
 
     def _acquire_camera_series(self, imsize: int, exposure_time: float, detector: str, readout_area: str, frame_combining: int, length: int) -> str:
         camera_detector = {"flucam": "Flucam", "bm-ceta": "BM-Ceta"}.get(detector.lower(), detector)

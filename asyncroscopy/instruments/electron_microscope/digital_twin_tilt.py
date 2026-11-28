@@ -638,7 +638,7 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
         return json.dumps(
             {
                 "sample": "bulk silicon FIB lamella",
-                "beam_blanked": self._blanked,
+                "beam_blanked": self._beam_blanked(),
                 "projector_mode": self._projector_mode,
                 "stage_command": self._stage_command.tolist(),
                 "image_shift_m": self._image_shift.tolist(),

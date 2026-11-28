@@ -24,7 +24,7 @@ class _Exported:
 
 def test_the_refusing_defaults_name_their_commands():
     assert "acquire_camera_image" in unsupported_commands(DigitalTwinParticles)
-    assert "acquire_camera_image" in unsupported_commands(DigitalTwin)
+    assert "acquire_camera_image" not in unsupported_commands(DigitalTwin)
     assert "acquire_camera_image" not in unsupported_commands(DigitalTwinTilt)
     assert "blank_beam" not in unsupported_commands(DigitalTwinParticles)
 

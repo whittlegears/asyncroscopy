@@ -10,7 +10,7 @@ import numpy as np
 import pyTEMlib.image_tools as it
 import pyTEMlib.probe_tools as pt
 
-from tango.server import attribute, device_property
+from tango.server import device_property
 
 from asyncroscopy.data.data_writer import save_acquisition
 from asyncroscopy.instruments.electron_microscope.digital_twin_base import ElectronMicroscopeTwin
@@ -32,16 +32,6 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
     acceleration_voltage = device_property(dtype=float, default_value=200e3,
                                            doc="Acceleration voltage (V) of the simulated probe: its wavelength. The probe's "
                                                "aberrations are pyTEMlib's Spectra300 target values whatever the voltage.")
-
-    # ------------------------------------------------------------------
-    # Attributes
-    # ------------------------------------------------------------------
-    # not finishded
-    manufacturer = attribute(
-        label="DigitalTwinParticles",
-        dtype=str,
-        doc="Simulation backend",
-    )
 
     # ------------------------------------------------------------------
     # Initialisation
@@ -66,14 +56,6 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
 
     def _ground_truth(self) -> dict:
         return {**super()._ground_truth(), "particle_count": len(self._particle_records)}
-
-
-    # ------------------------------------------------------------------
-    # Attribute read methods
-    # ------------------------------------------------------------------
-
-    def read_manufacturer(self) -> str:
-        return self._manufacturer
 
 
     # ------------------------------------------------------------------

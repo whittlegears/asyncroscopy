@@ -97,6 +97,7 @@ def save_acquisition(
             _seal(device, path, instrument_id)
             keys.append(data_server.register_path(str(path)) if data_server is not None else str(path))
         _ledger(device, attrs_list[0] or {}, sample, keys[0], instrument_id)
+        _cache_images(device, acquisition_type, zip(keys, detector_list, data_list))
         return keys[0] if len(keys) == 1 else json.dumps(keys)
 
     has_labeled_datasets = len(detector_list) > 1 or len(data_list) > 1
@@ -121,7 +122,15 @@ def save_acquisition(
     _seal(device, path, instrument_id)
     key = data_server.register_path(str(path)) if data_server is not None else str(path)
     _ledger(device, attrs_list[0] or {}, sample, key, instrument_id)
+    _cache_images(device, acquisition_type, [(key, dataset["attrs"]["detector"], dataset["source"]) for dataset in datasets])
     return key
+
+
+def _cache_images(device, acquisition_type: str, saved) -> None:
+    """Offer what was just saved to the device's image cache (get_image_data_cached), when it keeps one."""
+    cache = getattr(device, "image_cache", None)
+    if cache is not None:
+        cache.add(acquisition_type, saved)
 
 
 def save_acquisition_stream(

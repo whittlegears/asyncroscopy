@@ -179,6 +179,7 @@ OUT_OF_RANGE = [
     ("move_stage", [0.0, 0.0], "specimen.stage.absolute_move"),
     ("move_stage", [NAN, 0.0, 0.0, 0.0, 0.0], "specimen.stage.absolute_move"),
     ("place_beam", [1.5, 0.5], "optics.paused_scan_beam_position"),
+    ("place_beam_list", [0.25, 0.25, 1.5, 0.5], "optics.paused_scan_beam_position"),
 ]
 
 
@@ -399,11 +400,39 @@ def test_autoscript_refuses_an_unknown_valve_or_screen_word(autoscript, command,
     assert [c for c in autoscript.client.writes() if c["path"].startswith(("vacuum", "detectors.screen"))] == []
 
 
-def test_autoscript_has_no_attributes_that_duplicate_commands():
-    """fov, defocus and beam_state duplicated get_fov, get_defocus and get_parameters; manufacturer raised when read;
-    register_stage duplicated get_stage. One way to read each."""
-    for name in ("fov", "defocus", "beam_state", "manufacturer", "register_stage"):
-        assert not hasattr(AutoScriptMicroscope, name), name
+def test_autoscript_has_no_register_stage():
+    """register_stage published the stage to a settings-only STAGE device; the AutoScript STAGE device now reads the
+    hardware itself, so it only duplicated get_stage."""
+    assert not hasattr(AutoScriptMicroscope, "register_stage")
+
+
+@pytest.mark.parametrize("attribute, command", [("fov", "get_fov"), ("defocus", "get_defocus")])
+def test_read_only_attributes_read_through_their_command_reader(backend, attribute, command):
+    backend.call("set_fov", 2.5e-7)
+    backend.call("set_defocus", -3e-8)
+    assert getattr(EM, f"read_{attribute}")(backend.device) == pytest.approx(backend.call(command))
+
+
+def test_beam_state_reads_the_blanker_get_parameters_reports(backend):
+    backend.call("blank_beam")
+    assert EM.read_beam_state(backend.device) is True and json.loads(backend.call("get_parameters"))["beam_blanked"] is True
+    backend.call("unblank_beam")
+    assert EM.read_beam_state(backend.device) is False and json.loads(backend.call("get_parameters"))["beam_blanked"] is False
+
+
+def test_manufacturer_reads_as_a_string(backend):
+    manufacturer = EM.read_manufacturer(backend.device)
+    assert isinstance(manufacturer, str) and manufacturer == json.loads(backend.call("get_parameters")).get("manufacturer", manufacturer)
+
+
+def test_autoscript_manufacturer_is_thermo_fisher_over_tango(auto_script_proxy):
+    assert auto_script_proxy.manufacturer == "Thermo Fisher Scientific"
+
+
+@pytest.mark.parametrize("name, value", [("fov", 1e-7), ("defocus", 1e-8), ("beam_state", True), ("manufacturer", "x")])
+def test_autoscript_read_only_attributes_refuse_writes(auto_script_proxy, name, value):
+    with pytest.raises(tango.DevFailed):
+        setattr(auto_script_proxy, name, value)
 
 
 def test_autoscript_get_parameters_reports_optics_versions_and_auto_blank_from_the_instrument(autoscript):
@@ -448,7 +477,8 @@ def test_autoscript_lists_its_detectors_and_refuses_one_it_does_not_have(autoscr
 def test_the_twin_lists_the_detectors_it_renders(twin):
     detectors = json.loads(twin.call("get_detectors"))
     parameters = json.loads(twin.call("get_parameters"))
-    assert detectors["scanning"] == parameters["scan_detectors"] and detectors["camera"] == parameters["camera_detectors"] == []
+    assert detectors["scanning"] == parameters["scan_detectors"] and detectors["camera"] == parameters["camera_detectors"]
+    assert "BM-Ceta" in detectors["camera"]  # the CAMERA device's names, which all give the twin's one bright-field camera
 
 
 # AutoScript actions added for review: operator only until a person says otherwise

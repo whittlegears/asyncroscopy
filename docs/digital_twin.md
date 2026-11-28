@@ -124,7 +124,24 @@ Each acquisition's record is appended to `<ground_truth_directory>/<device>_acqu
 - `move_stage([x, y, z, alpha, beta])` (x/y/z metres, alpha/beta degrees), `get_stage()` (reported position)
 - `set_fov(fov)`, `get_fov()`, `set_defocus(defocus)`, `get_defocus()`, `set_stigmator([a, b])`, `get_stigmator()` (metres of A1)
 - `acquire_scanned_image(["haadf", "bf"])`: one scan, one image per detector; honours the SCAN device's `scan_region`
-- `place_beam([x, y])` (fractions of the field of view), `acquire_spectrum("eds")`
+- `place_beam([x, y])` (fractions of the field of view), `acquire_spectrum("eds")`. `place_beam_list([x0, y0, x1, y1, ...])`
+  checks every position with `place_beam`'s one check before the beam moves (one bad position refuses the list), then
+  parks the beam at each in turn and leaves it at the last; it acquires nothing. A write to the `beam_pos` attribute
+  goes through the same check.
+- `acquire_camera_image()`: on `DigitalTwin`, a conventional bright-field TEM image with the CAMERA device's `imsize`,
+  `exposure_time`, `readout_area` and `output_format`. The illuminated field is the field of view (`set_fov`); the
+  readout area reads its centre (Full: all, Half: half the width, Quarter: a quarter), so `pixel_size_m` is that width
+  over `imsize`. The beam current spreads evenly over the field: a pixel's counts are current x exposure / e x
+  (pixel / field of view)^2 x the fraction the objective aperture passes, which is the scanning BF detector's model of
+  the same projected weight (reciprocity), with Poisson noise from the twin's seed. Blanked, closed valves or an
+  inserted screen give zero. It is mass-thickness contrast only: no phase contrast or defocus, so a pixel below
+  `atomic_pixel_threshold` is refused. The CAMERA device has no binning or pixel-size attribute, so none is used; the
+  dose ledger does not count camera images (as on AutoScript), though the twin's own dose map does.
+  `acquire_scanned_data_advanced` is unsupported here: DigitalTwin has no diffraction model to give a 4D-STEM frame.
+- `get_image_data_cached(index)`: one of the latest saved 2-D images (0 the newest), from memory, as JSON metadata
+  and raw bytes; the `image_cache_size` property (8) bounds it. Spectra, series and 4D data are not cached.
+- Read-only attributes `fov`, `defocus`, `beam_state` (true while blanked) and `manufacturer`, read through the same
+  readers as `get_fov`, `get_defocus` and `get_parameters`, as on AutoScript.
 - `get_parameters()`: status JSON including simulated time; the attributes `beam_current_pa`, `beam_current_source` and `stage_moving` say the same for a client that reads attributes
 - `export_ground_truth()`: see above
 
@@ -145,8 +162,9 @@ pose and beam tilt (`get_stage`, `get_beam_tilt` and every saved file give the c
 coordinates and local lattice under a parked beam, and for 4D-STEM a `truth_file` with the lattice, rotation and tilt
 maps, written under the `ground_truth_directory` property (`outputs/twin_ground_truth`; never the acquisition
 directory, which Tiled serves); the diffraction twin's particle and its strain; the gold twin's rendered atom count and
-corrector aberrations. Only `DigitalTwinDiffraction` and `DigitalTwinTilt` have a camera
-model: on the other twins `acquire_camera_image()` raises UnsupportedCommand, and their `action_hints` mark it
+corrector aberrations. `DigitalTwin`, `DigitalTwinDiffraction` and `DigitalTwinTilt` have a camera
+model (a bright-field image on `DigitalTwin`, diffraction patterns on the other two): on `DigitalTwinParticles` and
+`PolycrystallineGoldDigitalTwin`, whose pseudo-potentials have no physical scale for a TEM image, `acquire_camera_image()` raises UnsupportedCommand, and their `action_hints` mark it
 `unsupported`, so agent endpoints do not offer it. Every twin blanks with the same blanker (`TwinBlanker`,
 `scanning_beam_twin.py`): blanked, no electrons reach the sample or a detector. `DigitalTwin` then gives 0 pA; the
 atomistic twins, which have no beam-current model, record zeros of the beam's signal (plus any detector noise they

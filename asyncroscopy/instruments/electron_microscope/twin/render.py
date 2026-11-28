@@ -86,20 +86,11 @@ class Renderer:
         damage: dict[int, float] | None = None,
     ) -> np.ndarray:
         """Expected detector fraction (0-1) at each pixel coordinate."""
-        damage = damage or {}
         level = self.level_for(pixel_m)
         center_x, center_y = float(xs.mean()), float(ys.mean())
         local_height = float(self.sample.height_at(center_x, center_y))
         sigma_m = survey_blur_sigma_m(ab_nm, self.params.convergence_mrad, local_height)
-        pad = 4.0 * sigma_m + 2.0 * pixel_m
-        x_min, y_min, n = self._grid(xs, ys, pixel_m, pad)
-        weight = self.sample.projected_weight(x_min, y_min, n, pixel_m, level, self.params.z_exponent, damage)
-        support_z, support_rho = ELEMENTS[self.sample.support_element][:2]
-        support_weight = support_z ** self.params.z_exponent * support_rho
-        weight += support_weight * support_angstrom
-        texture = self.sample.support_texture(x_min, y_min, n, pixel_m)
-        if texture is not None:  # only the film's own thickness varies, the contamination does not
-            weight += support_weight * (float(self.sample.support_thickness_m) / ANGSTROM) * texture
+        x_min, y_min, n, weight = self._weight(xs, ys, pixel_m, 4.0 * sigma_m + 2.0 * pixel_m, level, support_angstrom, damage)
         obj = object_signal(weight, detector, self.params)
         if level == "survey":
             obj = ndimage.gaussian_filter(obj, sigma=sigma_m / pixel_m, mode="nearest")
@@ -108,6 +99,30 @@ class Renderer:
             ab["C10"] = ab.get("C10", 0.0) - local_height * 1e9
             probe = atomic_probe(ab, n, n * pixel_m, self.params.voltage_v, self.params.convergence_mrad)
             obj = np.real(np.fft.ifft2(np.fft.fft2(obj) * np.fft.fft2(probe)))
+        return self._sample(obj, xs, ys, x_min, y_min, pixel_m)
+
+    def transmission(self, xs: np.ndarray, ys: np.ndarray, pixel_m: float, support_angstrom: float, damage: dict[int, float] | None = None) -> np.ndarray:
+        """Fraction of a parallel beam that passes the objective aperture at each pixel coordinate: a conventional
+        bright-field image's mass-thickness contrast. By reciprocity it is the scanning BF detector's fraction
+        (``object_signal`` "BF") of the same projected weight, without a probe; phase contrast is not modelled."""
+        x_min, y_min, _n, weight = self._weight(xs, ys, pixel_m, 2.0 * pixel_m, "survey", support_angstrom, damage)
+        return self._sample(object_signal(weight, "BF", self.params), xs, ys, x_min, y_min, pixel_m)
+
+    def _weight(self, xs: np.ndarray, ys: np.ndarray, pixel_m: float, pad_m: float, level: str, support_angstrom: float,
+                damage: dict[int, float] | None):
+        """The specimen's projected weight, with its support film and contamination, on a grid covering the pixels."""
+        x_min, y_min, n = self._grid(xs, ys, pixel_m, pad_m)
+        weight = self.sample.projected_weight(x_min, y_min, n, pixel_m, level, self.params.z_exponent, damage or {})
+        support_z, support_rho = ELEMENTS[self.sample.support_element][:2]
+        support_weight = support_z ** self.params.z_exponent * support_rho
+        weight += support_weight * support_angstrom
+        texture = self.sample.support_texture(x_min, y_min, n, pixel_m)
+        if texture is not None:  # only the film's own thickness varies, the contamination does not
+            weight += support_weight * (float(self.sample.support_thickness_m) / ANGSTROM) * texture
+        return x_min, y_min, n, weight
+
+    @staticmethod
+    def _sample(obj: np.ndarray, xs: np.ndarray, ys: np.ndarray, x_min: float, y_min: float, pixel_m: float) -> np.ndarray:
         rows = (ys - y_min) / pixel_m - 0.5
         cols = (xs - x_min) / pixel_m - 0.5
         return ndimage.map_coordinates(obj, [rows, cols], order=1, mode="nearest").clip(0.0, 1.0)

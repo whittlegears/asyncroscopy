@@ -22,7 +22,7 @@ from tango import AttrWriteType, DevState
 from tango.server import Device, attribute, device_property
 
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope
-from asyncroscopy.instruments.scanning_beam import refuses, unsupported
+from asyncroscopy.instruments.scanning_beam import check_beam_position, hardware_call, refuses, unsupported
 from asyncroscopy.instruments.scanning_beam_twin import TwinBlanker
 from asyncroscopy.utils.commands import command
 from asyncroscopy.instruments.electron_microscope.twin.specimen import SpecimenContext, build_specimen, parse_specimen
@@ -86,21 +86,14 @@ class ElectronMicroscopeTwin(TwinBlanker, ElectronMicroscope):
         doc="Where a twin writes the truth maps of an acquisition (export_ground_truth names the file); never the acquisition directory, which Tiled serves.",
     )
 
-    manufacturer = attribute(
-        label="DigitalTwin",
-        dtype=str,
-        doc="Simulation backend",
-    )
-
     beam_pos = attribute(
         label="Beam Position",
         dtype=(float,),
         max_dim_x=2,
-        access=AttrWriteType.READ,
+        access=AttrWriteType.READ_WRITE,
         unit="fractional",
-        min_value=0.0,
-        max_value=1.0,
-        doc="Beam position as [x, y] fractional coordinates, each in range [0.0, 1.0]. Read only: place_beam moves it.",
+        doc="Beam position as [x, y] fractions of the image, each from 0 to 1. A write parks the beam as place_beam does, "
+            "with the same check: a position outside 0 to 1 is refused with place_beam's error.",
     )
 
     def init_device(self) -> None:
@@ -171,14 +164,16 @@ class ElectronMicroscopeTwin(TwinBlanker, ElectronMicroscope):
         """Build the sample from ``seed`` and set ``_world_bounds_ang``; called on connect."""
         raise NotImplementedError(f"{type(self).__name__} does not implement _generate_sample")
 
-    # Attribute read methods
-    def read_manufacturer(self) -> str:
-        """Read method for the manufacturer attribute."""
+    def _manufacturer_name(self) -> str:
         return self._manufacturer
 
     def read_beam_pos(self) -> list[float]:
         """Read method for the beam position attribute."""
         return [self._beam_pos_x, self._beam_pos_y]
+
+    @hardware_call()
+    def write_beam_pos(self, value: list[float]) -> None:
+        self._place_beam(check_beam_position(value))
 
     @command(dtype_out=str, risk="high", operator_only=True, role="data.read")
     def export_ground_truth(self) -> str:
@@ -230,7 +225,7 @@ class ElectronMicroscopeTwin(TwinBlanker, ElectronMicroscope):
         output_format: str = ".h5",
     ) -> str:
         """A twin without a camera model has no camera image to give. A scan returned as one would be mislabelled."""
-        unsupported(self, "acquire_camera_image (this twin has no camera model; the diffraction and tilt twins have one)")
+        unsupported(self, "acquire_camera_image (this twin has no camera model; DigitalTwin, the diffraction and the tilt twins have one)")
 
     def _detectors(self) -> dict:
         """What this twin renders: a HAADF scan and an EDS spectrum, and no camera image (a twin with a camera
@@ -238,11 +233,8 @@ class ElectronMicroscopeTwin(TwinBlanker, ElectronMicroscope):
         return {"scanning": ["haadf"], "camera": [], "eds": ["eds"], "eels": [], "cameras": {}}
 
     def _place_beam(self, position) -> None:
-        """Park the beam at [x, y], fractions of the field (place_beam checks them first)."""
-        x, y = (float(v) for v in list(position)[:2])
-        if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
-            raise ValueError(f"beam position values must be in [0.0, 1.0], got x={x}, y={y}")
-        self._beam_pos_x, self._beam_pos_y = x, y
+        """Park the beam at [x, y], fractions of the field (place_beam, place_beam_list and a beam_pos write check them first)."""
+        self._beam_pos_x, self._beam_pos_y = (float(v) for v in list(position)[:2])
 
     def _set_fov(self, fov) -> None:
         """Set the field of view in meters."""
@@ -305,7 +297,7 @@ class ElectronMicroscopeTwin(TwinBlanker, ElectronMicroscope):
             "scan_detectors": self._detectors()["scanning"],
             "spectrum_detectors": self._detectors()["eds"],
             "camera_detectors": self._detectors()["camera"],
-            "beam_blanked": self._blanked,
+            "beam_blanked": self._beam_blanked(),
             **self._viewport_metadata(),
         }
         return json.dumps(parameters)

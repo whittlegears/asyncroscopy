@@ -23,10 +23,12 @@ import math
 import json
 from abc import abstractmethod
 
+import numpy as np
 import tango
-from tango import AttrWriteType, DevDouble, DevFloat, DevString, DevVarFloatArray, DevVarStringArray
+from tango import AttrWriteType, DevDouble, DevEncoded, DevFloat, DevString, DevVarFloatArray, DevVarStringArray
 from tango.server import attribute, device_property
 
+from asyncroscopy.instruments.image_cache import ImageCache
 from asyncroscopy.instruments.scanning_beam import BEAM_ADDRESSES, ScanningBeamInstrument, check_scan, hardware_call, refuses, unsupported
 from asyncroscopy.utils.commands import command
 
@@ -125,6 +127,9 @@ class ElectronMicroscope(ScanningBeamInstrument):
     camera_bytes_per_pixel = device_property(dtype=int, default_value=0, doc="Bytes per pixel of one camera frame as the camera returns it; 0: not set (acquire_camera_series is refused).")
     max_spectrum_image_points = device_property(dtype=int, default_value=DEFAULT_MAX_SPECTRUM_IMAGE_POINTS, doc="Largest points per side acquire_spectrum_image accepts.")
 
+    image_cache_size = device_property(dtype=int, default_value=8,
+                                       doc="How many of the latest saved 2-D images get_image_data_cached keeps in memory (one per detector image).")
+
     stem_mode = attribute(
         label="STEM Mode",
         dtype=bool,
@@ -132,9 +137,17 @@ class ElectronMicroscope(ScanningBeamInstrument):
         doc="True when the microscope is in STEM mode",
     )
 
+    # Read only, for Tango polling, events and monitors (Taurus, Jive). Each reads through the reader its command uses.
+    manufacturer = attribute(label="Manufacturer", dtype=str, access=AttrWriteType.READ, doc="Who makes this microscope, or the simulation backend of a twin.")
+    fov = attribute(label="Field of View", dtype=float, access=AttrWriteType.READ, unit="m", doc="The field of view in metres, as get_fov reads it. set_fov changes it.")
+    defocus = attribute(label="Defocus", dtype=float, access=AttrWriteType.READ, unit="m", doc="The defocus in metres, as get_defocus reads it. set_defocus changes it.")
+    beam_state = attribute(label="Beam Blanked", dtype=bool, access=AttrWriteType.READ,
+                           doc="True while the beam is blanked, as get_parameters' beam_blanked reads it. blank_beam and unblank_beam change it.")
+
     def _init_device_attributes(self) -> None:
         super()._init_device_attributes()
         self._stem_mode: bool = False
+        self.image_cache = ImageCache(int(self.image_cache_size))
 
     def read_instrument_type(self) -> str:
         return 'TEM'
@@ -155,6 +168,21 @@ class ElectronMicroscope(ScanningBeamInstrument):
 
     def read_stem_mode(self) -> bool:
         return self._stem_mode
+
+    def read_manufacturer(self) -> str:
+        return str(self._manufacturer_name())
+
+    @hardware_call()
+    def read_fov(self) -> float:
+        return float(self._get_fov())
+
+    @hardware_call()
+    def read_defocus(self) -> float:
+        return float(self._get_defocus())
+
+    @hardware_call()
+    def read_beam_state(self) -> bool:
+        return bool(self._beam_blanked())
 
     def argument_hints(self) -> dict:
         """The base's hints, plus defocus and the screen current, at this device's limits."""
@@ -233,6 +261,24 @@ class ElectronMicroscope(ScanningBeamInstrument):
             camera.frame_combining,
             camera.output_format,
         )
+
+    @command(dtype_in=int, dtype_out=DevEncoded, doc_in=":param index: 0 for the newest cached image, 1 for the one before, and so on.",
+             risk="low", role="data.read")
+    def get_image_data_cached(self, index: int) -> tuple[str, bytes]:
+        """One of the latest saved 2-D images from memory, by index (0 is the newest), without reading DATA or Tiled.
+        Returns JSON {"index", "key", "acquisition_type", "detector", "shape", "dtype", "cached", "cache_size"} and the
+        image's raw bytes (C order). Only the image_cache_size latest images are kept; a spectrum, a camera series or a
+        4D-STEM cube is never cached."""
+        try:
+            entry = self.image_cache.get(int(index))
+        except IndexError as error:
+            tango.Except.throw_exception("InvalidIndex", str(error), "get_image_data_cached()")
+        except LookupError as error:
+            tango.Except.throw_exception("NoCachedImage", str(error), "get_image_data_cached()")
+        image = entry["image"]
+        meta = {"index": int(index), "key": entry["key"], "acquisition_type": entry["acquisition_type"], "detector": entry["detector"],
+                "shape": list(image.shape), "dtype": str(image.dtype), "cached": len(self.image_cache), "cache_size": self.image_cache.size}
+        return json.dumps(meta), np.ascontiguousarray(image).tobytes()
 
     @command(dtype_out=str, risk="low", role="setting.read")
     @hardware_call()
@@ -453,6 +499,14 @@ class ElectronMicroscope(ScanningBeamInstrument):
     @refuses("set_defocus")
     def _set_defocus(self, defocus):
         unsupported(self, "set_defocus")
+
+    def _beam_blanked(self) -> bool:
+        """Whether the beam is blanked now: the one reader of get_parameters' beam_blanked and the beam_state attribute."""
+        unsupported(self, "reading the blanker")
+
+    def _manufacturer_name(self) -> str:
+        """Who makes the instrument this backend drives (the manufacturer attribute)."""
+        unsupported(self, "manufacturer")
 
     @refuses("set_column_valves")
     def _set_column_valves(self, state: str) -> None:
