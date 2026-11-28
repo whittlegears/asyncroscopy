@@ -14,13 +14,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import socket
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Literal
 
 from fastmcp import FastMCP
 
 from asyncroscopy.core.names import AGENT_GRAPHS, DEFAULT_MCP_URL
+from asyncroscopy.core.net import report_busy_port
 from asyncroscopy.mcp import endpoint_auth
 
 if TYPE_CHECKING:
@@ -28,18 +28,6 @@ if TYPE_CHECKING:
 
 # What query_agent may run: the swarm (""), or one of the named graphs.
 GraphName = Literal["", *AGENT_GRAPHS]
-
-
-def check_port_free(host: str, port: int) -> str | None:
-    """Return an error string if (host, port) cannot be bound, else None."""
-    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        probe.bind((host, port))
-    except OSError as exc:
-        return str(exc)
-    finally:
-        probe.close()
-    return None
 
 
 class AgentMCPServer:
@@ -219,14 +207,7 @@ def main(argv: list[str] | None = None) -> int:
         if refused:
             print(f"MCP ERROR: {refused}", flush=True)
             return 1
-        bind_error = check_port_free(args.http_host, args.http_port)
-        if bind_error:
-            print(
-                f"MCP ERROR: http://{args.http_host}:{args.http_port} is already in use - "
-                f"another agent MCP server is likely still running with a different config. "
-                f"Stop it or choose a different port. ({bind_error})",
-                flush=True,
-            )
+        if report_busy_port(args.http_host, args.http_port, "agent MCP server"):
             return 1
 
     server = AgentMCPServer(

@@ -553,3 +553,16 @@ def test_the_shipped_agent_configs_bind_loopback(config):
 
     host = yaml.safe_load((ROOT / "configs" / config).read_text(encoding="utf-8"))["agent"]["http_host"]
     assert host == "127.0.0.1"
+
+
+def test_report_busy_port_prints_the_line_the_startup_guis_parse(capsys):
+    from asyncroscopy.core.net import report_busy_port
+
+    with socket.socket() as holder:
+        holder.bind(("127.0.0.1", 0))
+        holder.listen()
+        port = holder.getsockname()[1]
+        assert report_busy_port("127.0.0.1", port, "agent MCP server") is True
+    assert capsys.readouterr().out.startswith(f"MCP ERROR: http://127.0.0.1:{port} is already in use - another agent MCP server")
+    assert report_busy_port("127.0.0.1", port, "MCP server") is False
+    assert capsys.readouterr().out == ""
