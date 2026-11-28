@@ -32,11 +32,13 @@ guessing from the command's name:
   MCP server keeps it from agents even when the attribute cannot be read;
 - ``stop``: a no-argument command the emergency stop calls;
 - ``routine``: auto mode runs it without a person;
-- ``role``: its canonical action role (``asyncroscopy.core.names.ROLES``).
+- ``role``: its canonical action role (``asyncroscopy.core.names.ROLES``). While the command runs it is
+  ``asyncroscopy.data.record.acting_role``, so an acquisition it saves records it as its ``acquisition_type``.
 """
 
 from __future__ import annotations
 
+import functools
 import inspect
 import json
 from typing import Any, Callable
@@ -46,6 +48,7 @@ from tango.server import attribute
 from tango.server import command as tango_command
 
 from asyncroscopy.core.names import ACTION_HINTS, check_role
+from asyncroscopy.data.record import acting
 
 DECLARED = "__asyncroscopy_declares__"
 
@@ -70,6 +73,15 @@ def _declaration(risk: str | None, operator_only: bool | None, stop: bool | None
     return found
 
 
+def _acting_as(func: Callable[..., Any], role: str) -> Callable[..., Any]:
+    @functools.wraps(func)
+    def run(*args: Any, **kwargs: Any) -> Any:
+        with acting(role):
+            return func(*args, **kwargs)
+
+    return run
+
+
 def command(f: Callable[..., Any] | None = None, *, risk: str | None = None, operator_only: bool | None = None, stop: bool | None = None,
             routine: bool | None = None, role: str | None = None, **kwargs: Any) -> Any:
     declared = _declaration(risk, operator_only, stop, routine, role)
@@ -86,7 +98,7 @@ def command(f: Callable[..., Any] | None = None, *, risk: str | None = None, ope
         doc_in = options.get("doc_in") or ""
         if params and options.get("dtype_in") is not None and ":param " not in doc_in:
             options["doc_in"] = f":param {params[0].name}: {doc_in}".rstrip()
-        wrapped = tango_command(func, **options)
+        wrapped = tango_command(_acting_as(func, declared["role"]) if "role" in declared else func, **options)
         if declared:
             setattr(wrapped, DECLARED, (options.get("name") or func.__name__, dict(declared)))
         return wrapped

@@ -15,7 +15,7 @@ import tifffile
 
 from asyncroscopy.data.dose_ledger import record_frame
 from asyncroscopy.data.integrity import seal
-from asyncroscopy.data.record import current_sample, record_fields, sample_of
+from asyncroscopy.data.record import acting_role, current_sample, record_fields, sample_of
 
 DEFAULT_ACQUISITION_DIR = "outputs/tiled_acquisitions"
 
@@ -73,6 +73,10 @@ def save_acquisition(
     ``.h5`` writes all detectors into one stacked file; ``.tiff`` writes one
     file per detector sharing a timestamp (TIFF cannot stack), registering each,
     and returns that file's key, or a JSON list of keys for several detectors.
+
+    The file, and each dataset, records ``acquisition_type``: the action role of the command acquiring it
+    (``acting_role``; left out outside such a command). An ``.h5`` file also records ``primary_array``, the
+    dataset shown by default (the first one). A TIFF file is a single array.
     """
     if output_format not in (".h5", ".tiff"):
         raise ValueError(f"Unsupported output_format {output_format!r}; expected '.h5' or '.tiff'")
@@ -84,6 +88,7 @@ def save_acquisition(
     # Use the value init_device stored and do not call device.get_name here. A device object made without Tango's own initialisation crashes on that call.
     instrument_id = getattr(device, "instrument_id", None) or type(device).__name__
     sample = current_sample(sample_of(device))
+    role = _role()
 
     if output_format == ".tiff":
         save_dir = data_server.save_path if data_server is not None else DEFAULT_ACQUISITION_DIR
@@ -93,7 +98,7 @@ def save_acquisition(
         keys = []
         for index, (source, detector) in enumerate(zip(data_list, detector_list)):
             path = directory / f"{stem}_{detector}.tiff"
-            _write_tiff(source, path, {**(attrs_list[index] or {}), **record_fields(instrument_id, acquisition_type, sample)})
+            _write_tiff(source, path, {**role, **(attrs_list[index] or {}), **record_fields(instrument_id, acquisition_type, sample)})
             _seal(device, path, instrument_id)
             keys.append(data_server.register_path(str(path)) if data_server is not None else str(path))
         _ledger(device, attrs_list[0] or {}, sample, keys[0], instrument_id)
@@ -113,11 +118,12 @@ def save_acquisition(
             name = f"image/{detector}"
         else:
             name = f"{dataset_name}/{detector}" if has_labeled_datasets else dataset_name
-        attrs = {"acquisition_type": acquisition_type, "detector": detector}
+        attrs = {**role, "detector": detector}
         attrs.update(attrs_list[index] or {})
         datasets.append({"name": name, "source": source, "attrs": attrs})
 
-    save_acquisition_hdf5(path, datasets, file_attrs={**(file_attrs or {}), **record_fields(instrument_id, acquisition_type, sample)})
+    described = {**role, "primary_array": datasets[0]["name"]}
+    save_acquisition_hdf5(path, datasets, file_attrs={**(file_attrs or {}), **described, **record_fields(instrument_id, acquisition_type, sample)})
     _seal(device, path, instrument_id)
     key = data_server.register_path(str(path)) if data_server is not None else str(path)
     _ledger(device, attrs_list[0] or {}, sample, key, instrument_id)
@@ -143,10 +149,11 @@ def save_acquisition_stream(
     """
     instrument_id = getattr(device, "instrument_id", None) or type(device).__name__
     sample = current_sample(sample_of(device))
+    role = _role()
     path = acquisition_filename(device, acquisition_type, detector, data_server)
     try:
         with h5py.File(path, "w", track_order=True) as h5:
-            for key, value in record_fields(instrument_id, acquisition_type, sample).items():
+            for key, value in {**role, "primary_array": dataset_name, **record_fields(instrument_id, acquisition_type, sample)}.items():
                 h5.attrs[key] = value if isinstance(value, (str, int, float, bool, np.number)) else json.dumps(value)
             dset = None
             for index, row in enumerate(rows):
@@ -157,7 +164,7 @@ def save_acquisition_stream(
                 h5.flush()
             if dset is None:
                 raise ValueError("save_acquisition_stream called with no rows")
-            for key, value in {"acquisition_type": acquisition_type, "detector": detector, **dataset_attrs}.items():
+            for key, value in {**role, "detector": detector, **dataset_attrs}.items():
                 dset.attrs[key] = value if isinstance(value, (str, int, float, bool, np.number)) else json.dumps(value)
     except BaseException:
         path.unlink(missing_ok=True)
@@ -177,6 +184,11 @@ def record_vendor_file(device: Any, path: Path, frame_attrs: dict) -> str:
     _seal(device, Path(path), instrument_id)
     _ledger(device, frame_attrs, current_sample(sample_of(device)), key, instrument_id)
     return key
+
+
+def _role() -> dict[str, str]:
+    role = acting_role.get()
+    return {"acquisition_type": role} if role else {}
 
 
 def _report(device, message: str) -> None:

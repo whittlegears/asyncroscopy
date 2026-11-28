@@ -12,6 +12,9 @@
 
 Settings stay where they were (each dataset's own attributes, and a map's ``plan``), and a map run
 file also records the agent ``run`` and the trace offset its events start at.
+
+``acting_role`` is the action role of the device command running now (``asyncroscopy.utils.commands.command``
+sets it for a command that declares one), which the DATA writer saves as an acquisition's ``acquisition_type``.
 """
 
 from __future__ import annotations
@@ -20,12 +23,25 @@ import json
 import subprocess
 import time
 import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 RECORD_KEYS = ("id", "instrument_id", "kind", "sample_id", "sample_load_id", "code_version", "created")
+
+acting_role: ContextVar[str | None] = ContextVar("acting_role", default=None)
+
+
+@contextmanager
+def acting(role: str) -> Iterator[None]:
+    token = acting_role.set(role)
+    try:
+        yield
+    finally:
+        acting_role.reset(token)
 
 
 @lru_cache(maxsize=1)

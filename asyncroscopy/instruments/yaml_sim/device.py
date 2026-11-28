@@ -55,6 +55,7 @@ from tango import AttrWriteType, CmdArgType, DevState
 from tango.server import Device, device_property
 
 from asyncroscopy.data.data_writer import save_acquisition
+from asyncroscopy.data.record import acting
 from asyncroscopy.instruments.instrument import Instrument
 from asyncroscopy.instruments.yaml_sim.spec import (
     MAP_COMMAND,
@@ -291,12 +292,13 @@ class YamlInstrument(Instrument):
         if self.data_device_address:
             proxy = tango.DeviceProxy(self.data_device_address)
             proxy.set_timeout_millis(DATA_TIMEOUT_MS)
-        return save_acquisition(
-            self, proxy, acquisition_type, detector, data,
-            dataset_name="spectrum" if data.ndim == 1 else "image",
-            dataset_attrs=attrs,
-            file_attrs={"instrument": type(self).__name__, "description": self.sim.spec.description, **(file_attrs or {})},
-        )
+        with acting(self.spec_hints[name]["role"]):
+            return save_acquisition(
+                self, proxy, acquisition_type, detector, data,
+                dataset_name="spectrum" if data.ndim == 1 else "image",
+                dataset_attrs=attrs,
+                file_attrs={"instrument": type(self).__name__, "description": self.sim.spec.description, **(file_attrs or {})},
+            )
 
     # The step protocol a job device uses to drive this instrument
     @command(dtype_in=str, dtype_out=float, doc_in=":param job_token: Names the job (and is needed for every later step of it).", risk="high", operator_only=True, role="other")

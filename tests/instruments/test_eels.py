@@ -156,7 +156,7 @@ def test_gatan_eels_acquires_saves_and_registers_spectrum(tmp_path):
     with h5py.File(saved_path, "r") as h5:
         spectrum = h5["spectrum"]
         np.testing.assert_array_equal(spectrum[()], np.array([10, 20, 30]))
-        assert spectrum.attrs["acquisition_type"] == "spectrum"
+        assert h5.attrs["kind"] == "spectrum" and h5.attrs["primary_array"] == "spectrum"
         assert spectrum.attrs["detector"] == "eels"
         assert spectrum.attrs["offset"] == pytest.approx(-5.0)
         assert spectrum.attrs["dispersion"] == pytest.approx(0.25)
