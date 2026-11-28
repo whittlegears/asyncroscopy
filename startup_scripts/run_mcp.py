@@ -25,7 +25,6 @@ from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, l
 from startup_scripts.config_schema import ConfigError, Setting, fill_placeholders, read_settings
 from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers, wait_for_exit
 
-# The config the GUI opens first. The launcher itself needs --yaml: it never picks an instrument for you.
 DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'mcp.yaml'
 YAML_REQUIRED = ('--yaml is required: name the MCP config of the stack to serve, e.g. configs/mcp_dt.yaml for the '
                  'digital twin or configs/mcp.yaml for the Spectra 300.')
@@ -65,7 +64,6 @@ SETTINGS = [
     Setting('mcp.needs_approval', 'yaml', {}, section='Access control', label='Needs approval'),
 ]
 OPERATOR_HOST = '127.0.0.1'
-# Lines mcp_server.py prints once tools are registered, or when it cannot start.
 STATUS_PATTERNS = [
     (re.compile(r'MCP ready: (\d+) tool'), '{0} tools', False),
     (re.compile(r'MCP ERROR: .*in use'), 'port in use', True),
@@ -74,7 +72,6 @@ STATUS_PATTERNS = [
 
 
 def is_config(raw) -> bool:
-    # A server config may carry an mcp stub. It is listed with the server configs.
     return isinstance(raw, dict) and isinstance(raw.get('mcp'), dict) and 'instrument' not in raw
 
 
@@ -92,7 +89,6 @@ class MCPConfig:
     tool_log: str = ''
     endpoint_role: str = 'agent'
     risk: dict[str, str] = field(default_factory=dict)
-    # mcp.safety.auto_routine is what auto mode runs without a person. None means what the devices declare.
     auto_routine: dict[str, list[str]] | None = None
     agent_profile: str = ''  # agent profile YAML whose tool selection endpoint_info reports. Empty means the default.
     trace: str = ''
@@ -103,14 +99,10 @@ class MCPConfig:
     permissions_file: str = ''
     approval_ttl_s: float = default_approval_ttl_s
     job_limits: dict[str, float] = field(default_factory=dict)
-    # http_host 0.0.0.0 on a stack that is not simulated binds 127.0.0.1 unless this is true. The devices' simulated property says which it is.
+    # On a hardware stack, http_host 0.0.0.0 binds 127.0.0.1 unless this is true.
     allow_remote_bind: bool = False
-    # Bearer-token verification by the facility's token service. None means no token check. See docs/Operation/remote_access.md.
     auth: AuthSettings | None = None
-    # Port of the operator endpoint started beside this agent endpoint. None starts no operator endpoint.
     operator_port: int | None = None
-    # Names (besides the bind host, localhost and, on 0.0.0.0, this computer) that a request's Host and Origin may give,
-    # such as the name a proxy or another machine reaches the endpoint by. Anything else is refused (asyncroscopy.mcp.host_guard).
     allowed_hosts: list[str] = field(default_factory=list)
 
 
@@ -186,7 +178,6 @@ def load_config(path: Path) -> Config:
     needs_approval = values['mcp.needs_approval'] or {}
     if not all(isinstance(names, list) for names in needs_approval.values()):
         raise ConfigError(['mcp.needs_approval must map a class (or "*") to a list of command names'])
-    # Settings the GUI has no widget for, such as safety, trace and auth, are read straight from the YAML.
     mcp = raw['mcp']
     return Config(
         path=path,
@@ -216,7 +207,6 @@ def load_config(path: Path) -> Config:
             approval_ttl_s=float(mcp.get('approval_ttl_s') or default_approval_ttl_s),
             job_limits={str(k): float(v) for k, v in (mcp.get('job_limits') or {}).items() if v not in (None, '')},
             allow_remote_bind=mcp.get('allow_remote_bind') is True,
-            # A relative public_key_file is read from the project directory. Dev tokens live under outputs/dev_tokens.
             auth=AuthSettings.from_config(mcp.get('auth'), base_dir=PROJECT_DIR),
             operator_port=_operator_port(mcp, path),
             allowed_hosts=_host_list(mcp.get('allowed_hosts'), path),
@@ -382,7 +372,6 @@ def main(argv: list[str] | None = None) -> int:
     print(f'  command: {" ".join(command)}')
 
     try:
-        # One state file per name and port so bridges on other ports survive.
         with ProcessManager(name=state_name) as manager:
             managed: ManagedProcess = manager.start_process(
                 key=config.mcp.name,

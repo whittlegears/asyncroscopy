@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from asyncroscopy import settings
 
-# Default to PyQt6 for modern systems. Set ASYNCROSCOPY_QT_API=pyqt5 on older
-# Windows 10 machines where Qt6 cannot load because the OS build is too old.
+# Set ASYNCROSCOPY_QT_API=pyqt5 on older Windows 10 builds where Qt6 cannot load.
 QT_API_ENV = settings.get().qt_api
 
 try:

@@ -39,9 +39,7 @@ class ConfigError(ValueError):
 
 
 
-# Addresses of lab machines stay out of git. A tracked config writes ${NAME};
-# the value comes from the environment, or else from configs/site.env, which git
-# ignores and the team shares privately (configs/site.env.example lists the names).
+# Lab addresses stay out of git: ${NAME} comes from the environment or the git-ignored configs/site.env.
 SITE_FILE = Path(__file__).resolve().parents[1] / "configs" / "site.env"
 _PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 

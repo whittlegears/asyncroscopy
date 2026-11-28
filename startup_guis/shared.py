@@ -53,8 +53,6 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 CONFIG_DIR = PROJECT_DIR / 'configs'
 GENERATED_CONFIG_DIR = PROJECT_DIR / 'outputs' / 'startup_configs'
 
-# Two palettes shared by every startup GUI, so the windows read as one app and
-# follow whichever appearance (light/dark) the OS is currently set to.
 DARK_COLORS = {
     'window': '#0f1319',
     'panel': '#161b22',
@@ -82,13 +80,10 @@ LIGHT_COLORS = {
     'accent': '#0969da',
     'danger': '#b42318',
     'check_mark': '#ffffff',
-    # The terminal keeps its console-style dark background in both themes, so
-    # output stays readable regardless of the surrounding chrome.
     'terminal_bg': '#0b0f14',
     'terminal_text': '#c9d1d9',
 }
-# Mutated in place by apply_theme() once the system appearance is known, so
-# every helper below (which reads COLORS at call time) picks up the right set.
+# Mutated in place by apply_theme(), so helpers that read COLORS at call time get the right set.
 COLORS = dict(DARK_COLORS)
 
 
@@ -109,8 +104,6 @@ def _mono_family() -> str:
 
 
 def _ui_font(size: int, weight=None) -> QFont:
-    # An empty family string leaves Qt on the platform's own UI font (SF on
-    # macOS, Segoe UI on Windows), which is what makes the window look native.
     font = QFont()
     font.setPointSize(size)
     if weight is not None:
@@ -119,9 +112,7 @@ def _ui_font(size: int, weight=None) -> QFont:
 
 
 def _font(name: str) -> QFont:
-    # Fonts are built lazily (rather than as module-level constants) because
-    # QFont requires a QApplication to already exist; callers only need them
-    # once the app is up.
+    # Built on demand, because QFont needs a QApplication to exist.
     if name == 'BODY_FONT':
         return _ui_font(14)
     if name == 'TITLE_FONT':
@@ -446,8 +437,6 @@ def scrollable(content: QWidget) -> QScrollArea:
     area.setWidget(content)
     area.setWidgetResizable(True)
     area.setFrameShape(NO_FRAME)
-    # As-needed in both directions: a narrow window scrolls rather than clipping
-    # the labels of whichever section happens to be open.
     area.setHorizontalScrollBarPolicy(SCROLLBAR_AS_NEEDED)
     area.setVerticalScrollBarPolicy(SCROLLBAR_AS_NEEDED)
     return area

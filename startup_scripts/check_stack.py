@@ -100,7 +100,6 @@ async def check_analysis(args: argparse.Namespace, run_key: str, agent: Client) 
         report("scorer adds points of interest inside the map", len(added) == 2 and all(x0 <= p["x_m"] <= x1 and y0 <= p["y_m"] <= y1 for p in added))
         poi = await structured("add_poi", {"map": map_key, "x_m": (x0 + x1) / 2, "y_m": (y0 + y1) / 2, "kind": "check", "reason": "check_stack"})
         report("agent can mark a point on the map", "id" in poi, json.dumps(poi)[:160])
-        # One wait covers every kind of job. The agent endpoint's wait_for_job also waits on analysis jobs.
         again = await structured("assemble_map", {"run": run_key})
         status = await wait_for_job(agent, again.get("job_id"), args.timeout)
         report("wait_for_job waits on an analysis job and returns its map key", "_map" in status.get("result_keys", {}).get("map", ""), json.dumps(status)[:200])

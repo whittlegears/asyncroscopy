@@ -80,7 +80,6 @@ class AgentConfig:
     model_provider: str = default_profile["model_provider"]
     max_steps: int = 10
     use_init_chat_model: bool = False
-    # Plain dicts, so --help and config errors work without the agent extras installed.
     startup_agents: list[dict] = field(default_factory=list)
     workflows: bool = True
     workflows_hardware: bool = False
@@ -106,7 +105,6 @@ def load_config(path: Path) -> Config:
     raw = fill_placeholders(raw)
     values = read_settings(raw, SETTINGS)
     problems = []
-    # Every key lives under agent, so a typo there would otherwise be silently ignored.
     known = {setting.path.split('.', 1)[1] for setting in SETTINGS}
     unknown = sorted(set(raw.get('agent') or {}) - known) + sorted(f'(top level) {k}' for k in set(raw) - {'agent'})
     if unknown:
@@ -177,8 +175,7 @@ def build_command(config: Config) -> list[str]:
         '--startup-agents-json',
         json.dumps(agent.startup_agents),
         extras=AGENT_EXTRAS,
-        # Install the extras only if they are missing. Otherwise skip uv's sync
-        # so this child cannot race other launchers re-syncing the same venv.
+        # Skip uv's sync when the extras are installed, so this child cannot race other launchers re-syncing the venv.
         sync=not agent_extras_installed(),
     )
     if agent.endpoint_role != 'agent':
@@ -242,7 +239,6 @@ def main(argv: list[str] | None = None) -> int:
     except (FileNotFoundError, KeyError, ValueError, TypeError) as exc:
         print(f'Config error: {exc}', file=sys.stderr)
         return 1
-    # Its own state file, so a cleanup never touches the server stack or another agent.
     state_name = f"run_llm_{config.agent.name}_{config.agent.http_port}"
     if args.cleanup:
         with ProcessManager(name=state_name):

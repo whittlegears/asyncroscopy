@@ -47,8 +47,7 @@ def install_shutdown_handlers(parent_pid: int | None = None) -> None:
         parent_gone = threading.Lock()
 
         def stop_for_parent() -> None:
-            # The parent was reading our output. With it gone every print would raise
-            # BrokenPipeError and abort the shutdown. So send output nowhere first.
+            # With the parent gone every print raises BrokenPipeError and aborts the shutdown, so output goes nowhere first.
             if requested.is_set() or not parent_gone.acquire(blocking=False):
                 return
             detach_output()

@@ -37,8 +37,7 @@ from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, l
 from startup_scripts.config_schema import ConfigError, DeviceTable, Setting, coerce, fill_placeholders, read_settings
 from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers
 
-# The launcher needs --yaml: it never picks an instrument for you. The GUI opens on the digital twin, so a fresh
-# window never targets the real microscope.
+# The GUI opens on the digital twin, so a fresh window never targets the real microscope.
 DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'DigitalTwin.yaml'
 YAML_REQUIRED = ("--yaml is required: name the stack's config, e.g. configs/DigitalTwin.yaml for the digital twin "
                  "or configs/Spectra300.yaml for the Spectra 300.")
@@ -115,15 +114,9 @@ class Config:
     reset_database_file: bool
     tiled: TiledConfig
     device_timeout_seconds: int
-    # The top level `simulated` key. Every device gets it as its `simulated` property. When absent it is False, which means real hardware.
     simulated: bool = False
-    # tango.bind_host is the interface the Tango database listens on, when it differs from tango.host, the
-    # name clients use. In a container or pod, tango.host is a service name and bind_host is 0.0.0.0.
     tango_bind_host: str = ""
-    # The top level `plugins` key lists modules or .py files every device imports. See asyncroscopy/plugins.py.
-    # They make a team's own @register_profile, @register_tracker and @register_strategy classes exist in each process.
     plugins: tuple[str, ...] = ()
-    # Entries under `devices` that have `enabled` set to false. They are removed from a kept database at start.
     disabled_devices: tuple[str, ...] = ()
 
 
@@ -335,7 +328,6 @@ def _instrument_config(raw: dict, values: dict | None = None) -> InstrumentConfi
         values = read_settings({"instrument": raw}, [s for s in SETTINGS if s.path.startswith("instrument.")])
     module = raw.get("module_name") or None
     if module:
-        # This is code outside this repository. It is a module the servers' Python can import.
         if not values["instrument.class_name"]:
             raise KeyError("Config section 'instrument' gives module_name, so it also needs class_name")
         _check_importable(module, "instrument.module_name")
@@ -456,7 +448,6 @@ def load_config(path: Path) -> Config:
             support_devices.append(device)
         else:
             disabled.append(key)
-    # The DATA device starts Tiled in get_data_proxy, so autostart without it fails after everything is up.
     if values["tiled.autostart"] and "data" not in broken and not any(d.key == "data" for d in support_devices):
         problems.append("tiled.autostart needs the data device; enable data or turn off tiled.autostart")
     simulated = plugins = None
@@ -467,8 +458,7 @@ def load_config(path: Path) -> Config:
         problems.append(str(exc))
     if problems:
         raise ConfigError(problems)
-    # The stack flag reaches every device as its `simulated` property. A device may repeat it, but never
-    # contradict it. One device saying simulated on a hardware stack would lift that device's hardware rules.
+    # A device may repeat the stack's simulated flag but never contradict it, which would lift its hardware rules.
     for where, properties in [("instrument", instrument.properties), *((f"devices.{d.key}", d.properties) for d in support_devices)]:
         _check_device_simulated(properties.get("simulated"), simulated, where, path)
         properties["simulated"] = [str(simulated).lower()]
@@ -591,10 +581,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     add_lifecycle_args(parser)
     return parser.parse_args(argv)
 
-
-# A launcher started without --isolated scours its Tango and Tiled ports and
-# deletes the project-root Tango database file. That is right for this config's
-# own leftovers from a crashed earlier run and wrong for anyone else's stack.
 
 LAUNCHER_NAME = "run_servers.py"
 ORPHAN_MARKERS = ("tango.databaseds", "tiled", "asyncroscopy.")  # processes an earlier stack leaves behind
@@ -935,7 +921,6 @@ def register_devices(
     status_line("OK", "database", f"{database.get_db_host()}:{database.get_db_port()}")
     instrument_name = selected_instrument(devices).device_name
 
-    # A device switched off must not linger from an earlier run in a kept database.
     for key in disabled:
         try:
             database.delete_device(f"asyncroscopy/{key}/default")
@@ -1072,8 +1057,7 @@ def manager_options(args: argparse.Namespace, port: int) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    # Line-buffer even when stdout is a pipe or file, as under a GUI, a log or CI. Then "ready"
-    # and the summary appear when they happen rather than when the launcher exits.
+    # Line-buffered even into a pipe, so "ready" and the summary appear when they happen.
     sys.stdout.reconfigure(line_buffering=True)
     args = parse_args(argv)
     install_shutdown_handlers(args.parent_pid)
@@ -1313,8 +1297,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 while True:
                     time.sleep(0.1)
-                    # A server that dies after startup stops the stack with an error. A supervisor such as
-                    # systemd or Kubernetes then sees the failure instead of a launcher that looks healthy.
+                    # A server that dies after startup stops the stack with an error, so a supervisor sees the failure.
                     stopped = next((p for p in manager.active_processes if not p.running), None)
                     if stopped is not None:
                         raise RuntimeError(f"{stopped.label} ({stopped.key}, pid {stopped.pid}) exited with code {stopped.process.returncode} after startup")
@@ -1329,7 +1312,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     except KeyboardInterrupt:
-        # Stopped during startup. The ProcessManager context has already stopped what was running.
         stop_tiled_server_quietly()
         status_line("OK", "stopped during startup")
         return 130
@@ -1350,8 +1332,6 @@ def main(argv: list[str] | None = None) -> int:
                     log_file = log_dir / f"{p.key}.log"
                     log_file.write_text(f"STDOUT:\n{stdout}\n\nSTDERR:\n{stderr}", encoding="utf-8")
                 print(color(f"Saved logs to {log_dir}", Style.bold + Style.yellow))
-
-        # No stop_tiled_server call is needed here. The process manager's tree kill has already ended Tiled with the data server.
             
         return 1
 

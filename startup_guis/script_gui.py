@@ -140,7 +140,6 @@ class ScriptGui(QMainWindow):
         self.script = script
         self.devices = getattr(script, "DEVICES", None)
         self.status_patterns = getattr(script, "STATUS_PATTERNS", [])
-        # A script's own reader merges in extends so the generated file stands alone. A relative base would not resolve from outputs/.
         self.read_yaml = getattr(script, "read_config", load_yaml)
         self.generated_path = GENERATED_CONFIG_DIR / f"{Path(script.LAUNCHER).stem}_gui.yaml"
         self.setWindowTitle(script.TITLE)

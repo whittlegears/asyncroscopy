@@ -26,7 +26,6 @@ from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handl
 
 DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'pytemlib.yaml'
 
-# stdio is left out because it only works when the client starts the server itself.
 TRANSPORTS = ('streamable-http', 'sse')
 SERVER_MODULE = 'pytemlib_mcp.analysis_server'
 DEFAULT_HOST = urlsplit(DEFAULT_ANALYSIS_URL).hostname
@@ -38,7 +37,6 @@ LOG_HELP = 'Blank: the default under outputs/. Write "" in the YAML to switch it
 
 TITLE = 'Asyncroscopy pyTEMlib MCP Startup'
 LAUNCHER = 'startup_scripts/run_pytemlib.py'
-# A setting left blank is not passed so the server uses its own default.
 SETTINGS = [
     Setting('pytemlib.transport', default=TRANSPORTS[0], section='pyTEMlib MCP server', choices=TRANSPORTS),
     Setting('pytemlib.host', default=DEFAULT_HOST, section='pyTEMlib MCP server', label='HTTP host'),
@@ -72,7 +70,6 @@ class PytemlibConfig:
     api_key: str = field(default='', repr=False)
     local_roots: list[str] = field(default_factory=list)
     local_runs: str = ''
-    # None means the server default. An empty string turns a log off.
     max_canvas_megapixels: float | None = None
     max_jobs: int | None = None
     trace: str | None = None
@@ -98,7 +95,6 @@ def load_config(path: Path) -> Config:
         raise ConfigError([f'{path.name} has no pytemlib: mapping, so it is not a config for {Path(LAUNCHER).name}'])
     values = read_settings(raw, SETTINGS)
     problems = []
-    # Report unknown keys so a typo is not silently ignored.
     known = {setting.path.split('.', 1)[1] for setting in SETTINGS}
     unknown = sorted(set(raw['pytemlib']) - known) + sorted(f'(top level) {k}' for k in set(raw) - {'pytemlib'})
     if unknown:
@@ -188,7 +184,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f'Config error: {exc}', file=sys.stderr)
         return 1
     server = config.pytemlib
-    # One state file per port so cleanup only touches this server.
     state_name = f'run_pytemlib_{server.port}'
     if args.cleanup:
         with ProcessManager(name=state_name):

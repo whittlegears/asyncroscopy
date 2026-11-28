@@ -15,8 +15,7 @@ class AdvancedMicroscopeGUI:
 
         self.saved_stage_positions = {}  # Dictionary to store saved stage positions 
 
-        # The Tango database comes from TANGO_HOST (host:port, the tango: section of the stack's YAML); there is no
-        # default, so this window never drives an instrument nobody named.
+        # No default, so this window never drives an instrument nobody named.
         if not os.environ.get("TANGO_HOST", "").strip():
             raise SystemExit("Set TANGO_HOST to the stack's Tango database, host:port (the tango: section of its YAML, "
                              "e.g. configs/Spectra300.yaml), before starting this GUI.")
