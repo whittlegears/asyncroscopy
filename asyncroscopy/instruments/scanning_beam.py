@@ -144,7 +144,11 @@ def unsupported(device: object, what: str) -> None:
 
 
 class ScanningBeamInstrument(Instrument):
-    """A blankable beam rastered over a field of view on a stage: the public commands every backend shares."""
+    """A blankable beam rastered over a field of view on a stage: the public commands every backend shares.
+
+    _place_beam, _blank_beam and _unblank_beam refuse unless a backend implements them, because a blank that did nothing
+    must never look like one that worked.
+    """
 
     proxy_addresses = BEAM_ADDRESSES
 
@@ -200,9 +204,9 @@ class ScanningBeamInstrument(Instrument):
     action_hints = action_hints_attribute(extra=lambda device: device.argument_hints())
 
     def _init_device_attributes(self) -> None:
+        """hardware_call takes _command_lock for every public command that reaches the instrument, except blank_beam."""
         self._microscope: Optional[object] = None
         self._detector_proxies: dict[str, tango.DeviceProxy] = {}
-        # hardware_call takes this lock for every public command that reaches the instrument, except blank_beam.
         self._command_lock = threading.RLock()
 
     def _disconnect(self):
@@ -325,8 +329,10 @@ class ScanningBeamInstrument(Instrument):
         """
         Acquire an image with scanning detectors and return its DATA/Tiled key.
         The default detector list is ['haadf'] on a STEM and ['se'] on an SEM.
+
+        An empty detector_list means none was named: Tango cannot send an omitted argument, so the MCP bridge sends an
+        empty list.
         """
-        # Tango cannot send an omitted argument, so the MCP bridge sends an empty list.
         if not detector_list:
             detector_list = [str(self.default_scan_detector)]
         scan = self._detector_proxies.get('scan')
@@ -476,7 +482,6 @@ class ScanningBeamInstrument(Instrument):
         """True while a stage move is under way; a backend whose moves return only on arrival may return False."""
         unsupported(self, "stage_moving")
 
-    # A blank that did nothing must never look like one that worked.
     @refuses("place_beam", "place_beam_list")
     def _place_beam(self, position):
         unsupported(self, "place_beam")

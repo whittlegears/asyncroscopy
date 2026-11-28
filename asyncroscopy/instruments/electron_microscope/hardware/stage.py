@@ -54,18 +54,20 @@ class STAGE(Device):
 
     Public stage vectors are always [x, y, z, alpha, beta], with x/y/z in
     meters and alpha/beta in degrees.
+
+    x_limits_m, y_limits_m and z_limits_m default to conservative values for a TEM goniometer; set them to the travel of
+    your stage. holders has no values built in; fill it in from your holders' specifications. high_tilt_deg and
+    high_tilt_max_abs_z_m are conservative placeholders; set both from the fitted holder's pole piece clearance before
+    tilting far.
     """
 
     action_hints = action_hints_attribute()
 
-    # Conservative defaults for a TEM goniometer; set them to the travel of your stage.
     x_limits_m = device_property(dtype=(float,), default_value=[-1e-3, 1e-3], doc="[min, max] stage x travel (m).")
     y_limits_m = device_property(dtype=(float,), default_value=[-1e-3, 1e-3], doc="[min, max] stage y travel (m).")
     z_limits_m = device_property(dtype=(float,), default_value=[-5e-4, 5e-4], doc="[min, max] stage z travel (m).")
-    # No holder values are built in; fill these in from your holders' specifications.
     holders = device_property(dtype=str, default_value="{}", doc='JSON {"holder name": {"z_m": [min, max], "alpha_deg": [min, max], "beta_deg": [min, max]}}; every key optional.')
     holder = device_property(dtype=str, default_value="", doc="The holder installed when no holder_file says otherwise (a name in holders); blank: none.")
-    # Conservative placeholders; set both from the fitted holder's pole piece clearance before tilting far.
     high_tilt_deg = device_property(dtype=float, default_value=15.0, doc="Tilt (deg, alpha or beta) above which |z| is held to high_tilt_max_abs_z_m. Set from the fitted holder.")
     high_tilt_max_abs_z_m = device_property(dtype=float, default_value=1e-4, doc="Largest |z| (m) allowed while tilted beyond high_tilt_deg. Set from the fitted holder.")
     holder_file = device_property(dtype=str, default_value="", doc="Where set_holder records the installed holder, so a restart keeps it; blank: outputs/stage/<device name>_holder.json.")
@@ -144,6 +146,7 @@ class STAGE(Device):
 
 
     def init_device(self) -> None:
+        """With an unknown holder, strictest holds the stage to what every configured holder allows."""
         Device.init_device(self)
         self.set_state(DevState.ON)
         self._position = [0.0, 0.0, 0.0, 0.0, 0.0]
@@ -164,7 +167,6 @@ class STAGE(Device):
         installed, problem = self._restore_holder()
         self._apply_holder(installed)
         if problem:
-            # Unknown holder: hold the stage to what every configured holder allows.
             strictest = dict(self._limits)
             for name in self._holders:
                 for axis, (low, high) in self._limits_for(name).items():

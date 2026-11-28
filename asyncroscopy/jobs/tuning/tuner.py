@@ -165,7 +165,7 @@ class VendorAutofocus(Strategy):
         return 1
 
     def check(self, plan: dict, capabilities: set) -> None:
-        # Vendor autofocus changes the stigmator, so without reading and writing it the Tuner could not put it back.
+        """Vendor autofocus changes the stigmator, so without reading and writing it the Tuner could not put it back."""
         if "stigmator" not in capabilities:
             raise ValueError(
                 "strategy vendor_autofocus changes the stigmator, and this microscope offers no "
@@ -681,11 +681,13 @@ class Tuner(JobDevice):
             raise TuneFailed("beam_current", f"at start: {exc}") from exc
 
     def on_start(self, job: dict) -> None:
+        """On a resume, what an earlier attempt left is undone first; a fresh snapshot over it would become the
+        baseline.
+        """
         plan = job["resolved_plan"]
         microscope = self.proxy(self.microscope_device_address)
         scan = self.proxy(self.scan_device_address)
         microscope.blank_beam()  # the sample is exposed only during a measurement
-        # On a resume, undo what an earlier attempt left first; a fresh snapshot over it would become the baseline.
         previous = job.get("tune") or {}
         unrestored = self._left_unrestored(previous)
         if unrestored:

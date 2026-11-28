@@ -3,6 +3,9 @@
 At atomic resolution the probe comes from pyTEMlib (the same code the
 polycrystalline-gold twin uses). At survey pixel sizes only its width matters,
 so a Gaussian whose width grows with |defocus| and astigmatism stands in.
+
+TARGET_ABERRATIONS_V: pyTEMlib's one Spectra300 target-aberration table is for 200 kV; the twins use it at every
+voltage. IDEAL_PROBE_SIGMA_M comes from the 50 pm resolution the Spectra 300 datasheet quotes.
 """
 
 from __future__ import annotations
@@ -13,7 +16,6 @@ import numpy as np
 import pyTEMlib.image_tools as it
 import pyTEMlib.probe_tools as pt
 
-# pyTEMlib's one Spectra300 target-aberration table is for 200 kV; the twins use it at every voltage.
 TARGET_ABERRATIONS_V = 200000
 
 CORRECTOR_TO_PYTEMLIB = {
@@ -29,7 +31,6 @@ CORRECTOR_TO_PYTEMLIB = {
     "A4": ("C45a", "C45b"),
 }
 
-# The Spectra 300 datasheet quotes 50 pm resolution.
 IDEAL_PROBE_SIGMA_M = 0.05e-9 / 2.355
 
 FOCUS_DRIFT_PERIODS_S = (1200.0, 21600.0)  # fastest and slowest swings of focus and astigmatism

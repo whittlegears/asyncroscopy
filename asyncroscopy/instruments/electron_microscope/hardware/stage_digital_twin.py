@@ -41,7 +41,10 @@ def _prop(dtype, default, doc):
 
 
 class DigitalTwinSTAGE(STAGE):
-    """The STAGE device of a simulated stack: limits and holders as on any STAGE, plus the stage's own errors and dynamics."""
+    """The STAGE device of a simulated stack: limits and holders as on any STAGE, plus the stage's own errors and dynamics.
+
+    position_sigma_m is declared again, because Tango binds an inherited attribute to the base class's read method.
+    """
 
     stage_move_noise_std = _prop(float, 0.0, "Gaussian landing error (m) on x, y and z.")
     stage_bias_x = _prop(float, 0.0, "Systematic x landing error (m).")
@@ -56,7 +59,6 @@ class DigitalTwinSTAGE(STAGE):
     drift_rate_per_min = _prop(float, 0.0, "Thermal drift (m/min).")
     drift_random_walk = _prop(float, 0.0, "Drift random-walk step per minute (m).")
 
-    # Declared again because Tango binds an inherited attribute to the base class's read method.
     position_sigma_m = attribute(dtype=float, unit="m", access=AttrWriteType.READ, doc="1-sigma distance between where the stage lands and where it reports (m), from the stage model (landing noise, backlash, readback noise).")
     stage_moving = attribute(dtype=bool, access=AttrWriteType.READ, doc="True while a long stage move is under way.")
     moving_seconds_left = attribute(dtype=float, unit="s", access=AttrWriteType.READ, doc="Real seconds until the current long move ends; 0 when none is under way.")

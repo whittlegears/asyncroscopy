@@ -88,14 +88,16 @@ class AutoScriptSTAGE(STAGE):
 
     def _connect_autoscript(self) -> None:
         """Connect the AutoScript client; without it (no package, or a refused connection) the device is in FAULT
-        with the reason as its Status, except on a simulated stack where a missing package is only a warning."""
+        with the reason as its Status, except on a simulated stack where a missing package is only a warning.
+
+        On hardware a stage that cannot reach AutoScript is set to FAULT, so it does not look ready.
+        """
         self._microscope = None
         if not _AUTOSCRIPT_AVAILABLE:
             reason = "autoscript_tem_microscope_client is not installed in this environment"
             if self.simulated:
                 self.warn_stream(f"AutoScript not available ({reason}); the stack is simulated")
                 return
-            # On hardware a stage that cannot reach AutoScript must not look ready.
             self.set_state(DevState.FAULT)
             self.set_status(f"Not connected to AutoScript: {reason}")
             self.error_stream(f"AutoScript STAGE not available: {reason}")

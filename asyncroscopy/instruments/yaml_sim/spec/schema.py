@@ -1,4 +1,8 @@
-"""The YAML instrument file's schema: its dataclasses, the checks made at load, and what the file declares to the MCP server."""
+"""The YAML instrument file's schema: its dataclasses, the checks made at load, and what the file declares to the MCP server.
+
+ACTION_VERBS: get_ and list_ commands are low-risk reads, so one whose doc reads as an action would really run in a dry
+run.
+"""
 
 from __future__ import annotations
 
@@ -45,7 +49,6 @@ KINDS = {"spectrum", "image", "value"}
 NOISES = {"poisson", "gaussian", "none"}
 RESERVED_NAMES = {"hold", "release_hold", "start_step", "step_status", "stop_step", "connect", "disconnect", "instrument_type", "clock_s"}
 SETTLE_STEP = "_settle"  # a job's settle_s step; the underscore keeps it apart from file names
-# get_ and list_ commands are low-risk reads, so one whose doc reads as an action would really run in a dry run.
 ACTION_VERBS = frozenset({
     "make", "move", "indent", "pick", "place", "aspirate", "dispense", "start", "run", "apply", "scan", "drive",
     "approach", "engage", "heat", "fire", "inject", "pump", "mill", "cut", "write", "expose", "trigger", "load", "push",

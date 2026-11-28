@@ -230,9 +230,11 @@ class Mapper(JobDevice):
         return {"ok": inside, "inside_box": inside, "box_m": [x_min, x_max, y_min, y_max], "xy_m": xy, "image_half_width_m": half_x}
 
     def _run_file(self, job: dict) -> RunFile:
-        """The job's run file (not opened)."""
+        """The job's run file (not opened).
+
+        The run file lives under the DATA save path, because Tiled only serves files there.
+        """
         if "run_path" not in job:
-            # Tiled only serves files under the DATA save path, so the run file must live there.
             base = Path(self.proxy(self.data_device_address).save_path) / "maps" if self.data_device_address else Path(self.output_directory)
             job["run_path"] = str(base / f"map_{job['reservation_id']}.h5")
         run = self._runs.get(job["reservation_id"])
@@ -294,12 +296,12 @@ class Mapper(JobDevice):
         job["result_keys"]["run_file"] = str(run.path)
 
     def on_start(self, job: dict) -> None:
+        """profile.setup leaves the instrument safe between tiles; it is made unsafe only while a tile is acquired."""
         plan = job["resolved_plan"]
         profile = self.profile()
         profile.check_start(job)  # before anything is set, so a refusal changes nothing
         sample = self._sample_now()
         self._refuse_another_load(job, sample)  # also before anything is set
-        # The instrument stays safe between tiles and is made unsafe only while a tile is acquired.
         profile.setup(job)
         live_drift.start(job, profile)  # remembers the image shift to restore at the end
         if plan.get("zoom_only") and "zoom_shift_before" not in job:
@@ -352,6 +354,9 @@ class Mapper(JobDevice):
         return pipeline.revisit(job, step["region"], profile, self._move)
 
     def _tile(self, job: dict, tile: dict) -> dict | None:
+        """acquire_tile makes the instrument unsafe only for this tile's acquisitions, and safe again before returning,
+        even on an error.
+        """
         plan = job["resolved_plan"]
         index = tile["index"]
         half_x, half_y = plans.tile_half(plan)
@@ -362,7 +367,6 @@ class Mapper(JobDevice):
             return None  # aborted mid-move; a resume moves again
         reported = [float(v) for v in profile.stage_reported(job)]
         correction = live_drift.correct(job, profile, tile, self._trace_drift_correction)
-        # Unsafe only for this tile's acquisitions, and safe again before returning, even on an error.
         acquired_tile = profile.acquire_tile(job, tile)
         if acquired_tile is None:
             return None  # aborted mid-tile; a resume redoes it
@@ -431,7 +435,7 @@ class Mapper(JobDevice):
             self._run_file(job).close()  # a resume reopens it
 
     def on_finish(self, job: dict) -> dict:
-        # A finished map must not leave the beam parked or the tip engaged on the last tile.
+        """A finished map must not leave the beam parked or the tip engaged on the last tile."""
         profile = self.profile()
         profile.make_safe(job)
         live_drift.finish(job, profile)
@@ -445,7 +449,10 @@ class Mapper(JobDevice):
         return {}
 
     def _release(self, request: str) -> str:
-        """Release; an unfinished run gets its final name and is sent for stitching in the background, so its tiles stay reachable."""
+        """Release; an unfinished run gets its final name and is sent for stitching in the background, so its tiles stay reachable.
+
+        Stitching runs in a thread, because calling the analysis server from this Tango command would block the device.
+        """
         reply = super()._release(request)
         try:
             reservation_id = self._parse(request, "reservation_id")["reservation_id"]
@@ -454,7 +461,6 @@ class Mapper(JobDevice):
                 self._close_run_file(job)
                 run = job["result_keys"].get("run")
                 if run and job["resolved_plan"].get("stitch"):
-                    # Calling the analysis server from this Tango command would block the device, so use a thread.
                     threading.Thread(target=self._stitch_released, args=(job, run), name="mapper-release-stitch", daemon=True).start()
         except Exception as exc:  # the release succeeded; not an error
             self.warn_stream(f"Released, but the run file was not finalized: {exc}")

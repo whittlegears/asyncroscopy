@@ -197,6 +197,10 @@ class Pipeline:
                 visit["poi_error"] = f"{type(exc).__name__}: {exc}"
 
     def revisit(self, job: dict, k: int, profile: InstrumentProfile, move: Callable[[dict, float, float], bool]) -> dict | None:
+        """The map places content at the stage reading plus the drift, so the stage goes to the map position minus the
+        drift. With live tracking the stitch fitted only what tracking left; the tracker's estimate_at is the rest.
+        cx and cy keep the image inside the reserved box, moved inward for a region near the edge.
+        """
         pipeline = self.state(job)
         if "regions" not in pipeline and job["resolved_plan"].get("regions"):
             pipeline["regions"] = job["resolved_plan"]["regions"]  # a plan that only revisits given points
@@ -211,16 +215,13 @@ class Pipeline:
         revisit = plan["revisit"]
         fov = float(revisit["fov_m"])
         if visit is None:
-            # The map places content at the stage reading plus the drift, so the stage goes to the map position minus it.
             now = profile.clock_s()
             dx, dy = drift_at(pipeline.get("drift_fit"), now - float(job.get("first_tile_s", now)))
-            # With live tracking the stitch fitted only what tracking left; the tracker's estimate is the rest.
             tx, ty = live_drift.estimate_at(job, now)
             dx, dy = dx + tx, dy + ty
             x, y = float(region["x_m"]) - dx, float(region["y_m"]) - dy
             x_min, x_max, y_min, y_max = plan["box_m"]
             half = fov / 2.0
-            # Keep the image inside the reserved box, moved inward for a region near the edge.
             cx = min(max(x, x_min + half), x_max - half) if x_max - x_min >= fov - EDGE_TOLERANCE_M else None
             cy = min(max(y, y_min + half), y_max - half) if y_max - y_min >= fov - EDGE_TOLERANCE_M else None
             if cx is None or cy is None or abs(cx - x) > REVISIT_EDGE_SHIFT * half or abs(cy - y) > REVISIT_EDGE_SHIFT * half:

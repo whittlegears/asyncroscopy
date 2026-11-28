@@ -12,6 +12,8 @@ A plan (asyncroscopy/contracts/map_plan.schema.json) is one of three kinds:
 a few numbers (``compact_grid``), the budgets checked and an ``estimate``. Steps are computed from the
 resolved plan when needed (``step_at``), so a plan of millions of tiles stores a few numbers. Nothing
 here talks to a device except through the profile and the ``analysis`` callable it is given.
+
+STITCH_SEARCH_SHARE: pyTEMlib's stitcher searches each overlap only up to this share of its width.
 """
 
 from __future__ import annotations
@@ -29,7 +31,6 @@ from . import live_drift
 from .profile import GENERIC_PLAN_DEFAULTS, GENERIC_PLAN_FIELDS, TIME_BUDGET, Cost, InstrumentProfile
 from .stitch_service import StitchService
 
-# pyTEMlib's stitcher searches each overlap only up to this share of its width.
 STITCH_SEARCH_SHARE = 0.6
 REVISIT_FOV_MIN_FRACTION = 1 / 20  # at most 20x zoom on a tile
 ZOOM_MIN_FOV_M = 5e-9  # dose climbs fast as the field shrinks

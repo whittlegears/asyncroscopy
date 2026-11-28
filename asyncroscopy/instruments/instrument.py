@@ -13,6 +13,9 @@ class CombinedMeta(tango.server.DeviceMeta, ABCMeta):
     pass
 
 class Instrument(tango.server.Device, metaclass=CombinedMeta):
+    """instrument_type reads through a lambda, because Tango binds an attribute's default read method to the declaring
+    class.
+    """
 
     data_device_address = tango.server.device_property(
         dtype=str,
@@ -33,7 +36,6 @@ class Instrument(tango.server.Device, metaclass=CombinedMeta):
     )
 
 
-    # A lambda, because Tango binds an attribute's default read method to the declaring class.
     instrument_type = tango.server.attribute(
         fget=lambda device: device.read_instrument_type(),
         name="instrument_type",

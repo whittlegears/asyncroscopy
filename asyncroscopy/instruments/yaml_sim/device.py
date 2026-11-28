@@ -199,6 +199,9 @@ class YamlInstrument(Instrument):
         return _refusing(func, *args, **kwargs)
 
     def _build_setting(self, name, quantity) -> None:
+        """The attribute methods take the device and the attribute, because Tango calls them so, unlike dynamic
+        commands.
+        """
         sim = self.sim
 
         def read(attr):
@@ -214,7 +217,6 @@ class YamlInstrument(Instrument):
         if quantity.units:
             props.set_unit(quantity.units)
         attr.set_default_properties(props)
-        # Tango calls attribute methods with the device and the attribute, unlike dynamic commands.
         self.add_attribute(attr, r_meth=lambda _device, a: read(a), w_meth=(lambda _device, a: write(a)) if quantity.settable else None)
 
         def get():
@@ -453,9 +455,12 @@ def device_class(name: str) -> type:
 
 
 def registered_class(instance: str, default: str) -> str:
-    """The class the launcher registered for this server instance (``<class_name>/<instance>``), or ``default``."""
+    """The class the launcher registered for this server instance (``<class_name>/<instance>``), or ``default``.
+
+    The server list is matched here, because PyTango's own database returns nothing for a pattern that starts with a
+    wildcard.
+    """
     try:
-        # PyTango's own database returns nothing for a pattern that starts with a wildcard, so match here.
         servers = [s for s in tango.Database().get_server_list("*").value_string if s.split("/", 1)[-1].lower() == instance.lower()]
     except tango.DevFailed:
         return default

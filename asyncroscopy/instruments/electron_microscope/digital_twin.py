@@ -346,7 +346,10 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
         return ab
 
     def _render_stem_image(self, imsize: int, dwell_time: float, detector_list: list, scan_region=None, frame=None) -> np.ndarray:
-        """Render one detector channel; pass ``frame`` to share one scan between detectors."""
+        """Render one detector channel; pass ``frame`` to share one scan between detectors.
+
+        The sample is dosed by the beam that reaches it; detected_pa counts only what gets past the screen.
+        """
         if frame is None:
             frame = self._scan_frame(int(imsize), float(dwell_time), scan_region)
         detector = str(detector_list[0]).upper()
@@ -363,7 +366,6 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
             damage=self._dose.damage_factors(self._specimen.feature_centers, visible),
         )
         rng = self._rng.for_event(f"detector_{detector}", frame["index"])
-        # The sample is dosed by the beam that reaches it; the detector counts only what gets past the screen.
         detected_pa = self._beam_current_pa() if self._beam_on_detector() else 0.0
         params = self._detector_drift.at(replace(self._detector_params, beam_current_pa=detected_pa), frame["record"]["t_start_s"])
         return count(fraction, frame["dwell_s"], params, rng)
@@ -600,7 +602,7 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
         return key
 
     def _viewport_metadata(self) -> dict:
-        # Report what the stage reports, not the true pose the base reads.
+        """Report what the stage reports, not the true pose the base reads."""
         metadata = super()._viewport_metadata()
         x, y, z = (float(v) / ANGSTROM for v in self._stage.reported[:3])
         half = self._fov / ANGSTROM / 2

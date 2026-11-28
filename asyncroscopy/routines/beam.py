@@ -20,6 +20,8 @@ AutoScript backend already drops its reading when anything that sets the current
 (monochromator focus, spot size, apertures, optical mode, high tension), so the age limit
 only has to cover drift. Lengthen it per device (``max_beam_current_age_s``) once first
 light has measured how far this gun drifts in that time.
+
+START_CURRENT_TOLERANCE is the largest rise in current between reserve and start that keeps the dose budget valid.
 """
 
 from __future__ import annotations
@@ -119,7 +121,6 @@ def usable_beam_current(parameters: dict, simulated: bool, max_age_s: float = DE
     return current
 
 
-# The largest rise in current between reserve and start that keeps the dose budget valid.
 START_CURRENT_TOLERANCE = 0.05
 
 

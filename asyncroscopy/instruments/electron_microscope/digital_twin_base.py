@@ -253,14 +253,16 @@ class ElectronMicroscopeTwin(TwinBlanker, ElectronMicroscope):
         return self._stage_position
 
     def _move_stage(self, position):
-        """Move the stage to the requested 5-axis vector."""
+        """Move the stage to the requested 5-axis vector.
+
+        stage.position sets all five axes at once, so a refused z cannot leave x and y already moved.
+        """
         if len(position) != 5:
             raise ValueError("Stage position must have 5 values: [x, y, z, alpha, beta]")
         target = np.array(position, dtype=np.float64)
 
         stage = self._detector_proxies.get("stage")
         if stage is not None:
-            # All five axes at once, so a refused z cannot leave x and y already moved.
             stage.position = [float(v) for v in target]
 
         self._stage_position = target

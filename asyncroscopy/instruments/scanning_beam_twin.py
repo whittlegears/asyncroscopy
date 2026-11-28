@@ -130,10 +130,13 @@ class ScanningBeamTwin(TwinBlanker):
         return {"pa": float(self._detector_params.beam_current_pa), "source": "measured", "age_s": 0.0}
 
     def _scan_frame(self, imsize: int, dwell_time: float, scan_region) -> dict:
-        """Lay out one scan: pixel coordinates on the sample, timing, and the ground-truth record."""
+        """Lay out one scan: pixel coordinates on the sample, timing, and the ground-truth record.
+
+        scan_region is [left, top, width, height] in fractions of the field, as SCAN, AutoScript and the tilt twin all
+        use it.
+        """
         self._acq_index += 1
         index = self._acq_index
-        # SCAN, AutoScript and the tilt twin all use [left, top, width, height] in fractions of the field.
         region = check_scan(imsize, dwell_time, scan_region)
         self._fetch_stage(frame_time(int(imsize), int(imsize), float(dwell_time), self._scan_params))
         left, top, width, height = region

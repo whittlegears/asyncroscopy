@@ -63,6 +63,7 @@ class CrystalSpecimen(Specimen):
         support_thickness_m: float = 0.0,
         height_gradient: tuple[float, float] = (0.0, 0.0),
     ) -> None:
+        """brightness rises close to the zone axis, where the beam channels down the columns and scatters more to HAADF."""
         if element not in ELEMENTS:
             raise ValueError(f"crystal element {element!r} unknown; known: {sorted(ELEMENTS)}")
         if size_xy_m <= 0 or thickness_m <= 0 or grain_count < 1:
@@ -80,7 +81,6 @@ class CrystalSpecimen(Specimen):
         self.rotation_rad = rng.uniform(0.0, np.pi / 2.0, size=n)  # a cubic [001] grain repeats every 90 degrees
         self.thickness = thickness_m * (1.0 + thickness_variation * rng.uniform(-1.0, 1.0, size=n))
         self.tilt_mrad = np.abs(rng.normal(0.0, mosaic_spread_mrad, size=n))
-        # Close to the zone axis the beam channels down the columns and scatters more to HAADF.
         self.brightness = 1.0 + channeling * np.exp(-((self.tilt_mrad / 10.0) ** 2))
         self._tree = cKDTree(self.seeds)
         self.options = {"element": element, "lattice_constant_m": self.lattice_m, "thickness_m": thickness_m, "grain_count": n}

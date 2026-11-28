@@ -56,6 +56,7 @@ class YamlJob(JobDevice):
     instrument_device_address = device_property(dtype=str, default_value="asyncroscopy/instrument/default", doc="The YamlInstrument these jobs drive.")
 
     def init_device(self) -> None:
+        """JOB_KIND and PLAN_EXAMPLE are set on the class, because the envelope reads them there."""
         JobDevice.init_device(self)
         self._plans: dict[str, JobPlan] = {}
         self._holds: dict[str, threading.Event] = {}  # by job id, set when the hold is given back
@@ -75,7 +76,6 @@ class YamlJob(JobDevice):
         self.spec = spec
         first = next(iter(spec.jobs.values()))
         kinds = "; ".join(f"{job.name}: {job.doc}" for job in spec.jobs.values())
-        # Set on the class, because the envelope reads them there.
         type(self).JOB_KIND = kinds
         type(self).PLAN_EXAMPLE = plan_example(spec, first)
 
@@ -133,8 +133,10 @@ class YamlJob(JobDevice):
                     self.warn_stream(f"Could not renew the hold of job {token}: {exc.args[0].desc.strip()[:200] if exc.args else exc}")
 
     def _take_hold(self, job: dict) -> None:
+        """hold goes through self.proxy and its step_timeout_s, because the first hold may wait behind a direct call
+        still running on the instrument.
+        """
         token = job["job_id"]
-        # step_timeout_s, because the first hold may wait behind a direct call still running on the instrument.
         lease_s = float(self.proxy(self.instrument_device_address).hold(token))
         self._holds[token] = threading.Event()
         threading.Thread(target=self._renew_hold, args=(token, lease_s, threading.current_thread()), name=f"hold-{token}", daemon=True).start()

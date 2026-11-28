@@ -100,7 +100,7 @@ class JobWorker:
             job["lease_until"] = time.time() + lease_seconds(self)
 
     def _omni_worker(self, job: dict, job_id: str) -> None:
-        # A thread PyTango did not create must register with omniORB before it makes Tango calls.
+        """EnsureOmniThread registers a thread PyTango did not create with omniORB before it makes Tango calls."""
         with tango.EnsureOmniThread():
             self._worker(job, job_id)
 

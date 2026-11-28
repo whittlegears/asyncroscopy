@@ -1,4 +1,7 @@
-"""Atomistic polycrystalline gold digital twin."""
+"""Atomistic polycrystalline gold digital twin.
+
+HAADF_COLLECTED_FRACTION: an HAADF detector collects a few per cent of the beam; this sets the image's shot noise.
+"""
 
 from __future__ import annotations
 
@@ -17,7 +20,6 @@ from asyncroscopy.instruments.electron_microscope.twin.optics import CORRECTOR_T
 from asyncroscopy.instruments.electron_microscope.twin.specimen import ViewRequest
 from asyncroscopy.routines.dose import ELECTRON_CHARGE
 
-# An HAADF detector collects a few per cent of the beam; this sets the image's shot noise.
 HAADF_COLLECTED_FRACTION = 0.01
 
 

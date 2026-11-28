@@ -46,10 +46,12 @@ class DigitalTwinCorrector(CORRECTOR):
         self._simulation_aberrations: dict[str, list[float]] = {}
         super().init_device()
 
-    # Operator only: an agent must measure the twin's hidden aberrations, as on hardware.
     @command(dtype_in=str, risk="high", operator_only=True, role="setting.set")
     def set_aberrations_coeff_sim(self, json_aberrations_string: str) -> None:
-        """Set the simulated column's aberrations (JSON {name: [values in metres]}); names left out keep their defaults."""
+        """Set the simulated column's aberrations (JSON {name: [values in metres]}); names left out keep their defaults.
+
+        Operator only: an agent must measure the twin's hidden aberrations, as on hardware.
+        """
         coefficients = json.loads(json_aberrations_string)
         if not isinstance(coefficients, dict):
             raise ValueError("Simulation aberrations must be a JSON object")

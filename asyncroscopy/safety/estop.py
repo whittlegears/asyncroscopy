@@ -42,6 +42,8 @@ def stop_all(targets: list[StopTarget], *,
 
     ``missing``: steps already known to have failed (a device that offers no stop for what it does).
     Returns every step, {"tool", "ok", "error"?}, in the order they finished.
+
+    Sources are switched off again at the end (the second phase), in case a late job step switched one back on.
     """
     steps: list[dict[str, Any]] = []
     guard = threading.Lock()
@@ -70,7 +72,6 @@ def stop_all(targets: list[StopTarget], *,
 
     work = [t for t in targets if t.energy or t.other]
     if work:
-        # Sources off again at the end, in case a late job step switched one back on.
         pool = ThreadPoolExecutor(max_workers=len(work), thread_name_prefix="stop_all")
         phases = ({t.prefix: (t, [*t.energy, *t.other]) for t in work}, {t.prefix: (t, list(t.energy)) for t in work if t.energy})
         hung: set[str] = set()

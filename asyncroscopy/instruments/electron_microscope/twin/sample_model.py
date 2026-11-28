@@ -229,9 +229,11 @@ class SampleModel(ParticleTable, Specimen):
         return float(self.regions.film[self.regions.index_at(x, y)]) if self.regions is not None else 0.0
 
     def _film_waves(self, x_min: float, y_min: float, n: int, pixel_m: float) -> np.ndarray:
-        """The film's fine thickness variation: the sum of the texture waves this pixel size can show."""
+        """The film's fine thickness variation: the sum of the texture waves this pixel size can show.
+
+        seen drops waves shorter than two pixels: they would alias, so overlapping frames would not see the same film.
+        """
         kx, ky, phases, amplitude = self._texture_waves
-        # Waves shorter than two pixels would alias, so overlapping frames would not see the same film.
         seen = 2.0 * np.pi / np.hypot(kx, ky) >= 2.0 * pixel_m
         kx, ky, phases, amplitude = kx[seen], ky[seen], phases[seen], amplitude[seen]
         xs = x_min + (np.arange(n) + 0.5) * pixel_m

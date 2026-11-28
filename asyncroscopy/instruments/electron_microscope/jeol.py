@@ -72,13 +72,14 @@ class JeolMicroscope(ElectronMicroscope):
 
         ``set_port`` is not called: the detector REST service has its own default port, and
         ``hardware_port`` (AutoScript's) is unused here.
+
+        PyJEM 1.3.0.3564 has no check_connection(), so the get_attached_detector REST round trip stands in for one.
         """
         if not _PYJEM_AVAILABLE or self.testing_mode_bool:
             self.warn_stream('PyJEM not available; running JEOL device in testing mode.')
             return
         try:
             detector.set_ip(self.hardware_host)
-            # PyJEM 1.3.0.3564 has no check_connection(), so this REST round trip stands in for one.
             attached = detector.get_attached_detector()
             self._microscope = detector
             self.info_stream(

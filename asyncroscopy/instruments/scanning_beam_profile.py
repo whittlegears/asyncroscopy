@@ -68,10 +68,12 @@ class ScanningBeamProfile(InstrumentProfile):
         self.instrument().set_image_shift([float(xy[0]), float(xy[1])])
 
     def example_plan(self, request: str) -> dict | None:
+        """The dose comes only from what the request states, because a fixed number here gets copied into plans whose
+        user set no limit, which are then refused.
+        """
         if '"zoom"' in request:
             return None  # the Mapper's zoom example
         example = dict(self.plan_example)
-        # A fixed number here gets copied into plans whose user set no limit, which are then refused.
         stated = stated_dose(request)
         if stated is not None:
             example["dose_budget_e_per_a2"] = stated
@@ -128,7 +130,10 @@ class ScanningBeamProfile(InstrumentProfile):
             raise RuntimeError(f"the map's dose budget no longer holds at start: {exc}") from exc
 
     def resolve(self, p: dict) -> None:
-        """Refuse an instrument of another kind, and take the plan's detectors from the instrument when it names none."""
+        """Refuse an instrument of another kind, and take the plan's detectors from the instrument when it names none.
+
+        A spectrometer in detectors is refused, because it would map with no spectra at all.
+        """
         if self.instrument_types:
             found = str(self.instrument().read_attribute("instrument_type").value)
             if found not in self.instrument_types:
@@ -136,7 +141,6 @@ class ScanningBeamProfile(InstrumentProfile):
                                  f"{self.ctx.settings.microscope_device_address} is a {found}: set this Mapper's instrument_profile to one for it")
         if "detectors" not in p:
             p["detectors"] = [str(self.instrument().read_attribute("default_detector").value).lower()]
-        # A spectrometer in detectors would map with no spectra at all.
         spectra = [d for d in p["detectors"] if str(d).lower() in SPECTRUM_DETECTORS]
         if spectra:
             hint = ' For an EDS spectrum at each tile give "per_tile": ["eds_point"].' if "per_tile" in self.plan_fields else ""
@@ -230,6 +234,7 @@ class ScanningBeamProfile(InstrumentProfile):
         return self.ctx.proxy(self.setting("scan_device_address"))
 
     def setup(self, job: dict) -> None:
+        """The beam stays blanked between tiles; acquire_tile unblanks it only while acquiring."""
         plan = job["resolved_plan"]
         microscope = self.instrument()
         scan = self._scan()
@@ -240,7 +245,6 @@ class ScanningBeamProfile(InstrumentProfile):
         current = list(microscope.get_stage())
         job.setdefault("pose", {"z": float(plan.get("z_m", current[2])), "alpha": float(current[3]), "beta": float(current[4])})
         self._setup_extras(job, plan)
-        # The beam stays blanked between tiles. acquire_tile unblanks it only while acquiring.
         microscope.blank_beam()
 
     def _setup_extras(self, job: dict, plan: dict) -> None:
@@ -260,10 +264,12 @@ class ScanningBeamProfile(InstrumentProfile):
         return [float(v) for v in self.instrument().get_stage()]
 
     def acquire_tile(self, job: dict, tile: dict) -> dict | None:
+        """The beam is unblanked only for this tile, so a beam left on during moves and writes never parks on one spot.
+        frame_start is timed on the instrument's clock, which on a twin can differ from this computer's by any
+        factor.
+        """
         plan = job["resolved_plan"]
         microscope = self.instrument()
-        # Unblanked only for this tile, so a beam left on during moves and writes never parks on one spot.
-        # Timed on the instrument's clock, which on a twin can differ from this computer's by any factor.
         frame_start = self.ctx.clock_s()
         microscope.unblank_beam()
         try:

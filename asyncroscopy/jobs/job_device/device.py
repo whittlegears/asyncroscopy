@@ -348,7 +348,10 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
         )
 
     def _checked_plan(self, plan) -> tuple[dict, bool, dict, dict, dict]:
-        """(plan without dry_run, dry_run, resolved plan, steps or step_count, limits): what reserve and revise check."""
+        """(plan without dry_run, dry_run, resolved plan, steps or step_count, limits): what reserve and revise check.
+
+        The plan is checked outside the lock, so abort, release and a running job's progress do not wait on it.
+        """
         if not isinstance(plan, dict):
             raise JobError("bad_request", "'plan' must be an object")
         plan = dict(plan)
@@ -362,7 +365,6 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
                 "dry_run_unsupported", f"{type(self).__name__} does not support dry runs: its steps read replies a dry run "
                 "does not produce (SUPPORTS_DRY_RUN is false). Nothing was reserved; rehearse this job on a simulated stack",
             )
-        # Outside the lock, so abort, release and a running job's progress do not wait on it.
         try:
             resolved = self.resolve_plan(plan)
         except (JobError, ValueError, TypeError, KeyError, jsonschema.ValidationError):
@@ -557,6 +559,7 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
         return self._guard(self._abort_job, request)
 
     def _abort_job(self, request: str) -> str:
+        """The join waits at most 2 s: a long step stays aborting, so this call never blocks past client timeouts."""
         job = self._by_job_id(self._parse(request, "job_id")["job_id"])
         job_id = job.get("job_id")
         with self._lock:
@@ -567,7 +570,6 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
             elif job["state"] == "reserved":
                 job["state"] = "aborted"
             self._save(job)
-        # A long step stays aborting, so this call never blocks past client timeouts.
         thread = self._threads.get(job_id)
         if thread is not None:
             thread.join(timeout=2.0)

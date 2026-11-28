@@ -93,7 +93,7 @@ def job_graph(device: Any, job: dict, job_id: str, abort: threading.Event, gener
         return {"index": index + 1, "more": True}
 
     def finish(state: JobState) -> dict:
-        # Not under the lock, because on_finish may be slow and abort, job_status and release must still answer
+        """on_finish runs outside the lock, because it may be slow and abort, job_status and release must still answer."""
         finished = device.on_finish(job) or {}
         with device._lock:
             job["result_keys"].update(finished)

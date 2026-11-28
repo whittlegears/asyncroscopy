@@ -84,6 +84,9 @@ class ElectronMicroscope(ScanningBeamInstrument):
 
     Detector-specific settings such as dwell time and resolution are stored in
     dedicated detector devices and read via DeviceProxy at acquisition time.
+
+    run_stem_auto_focus and run_beam_tilt_auto_focus are operator only until reviewed: an agent is not given them
+    (docs/Microscopy/modify_auto_script_microscope.md lists them).
     """
 
     proxy_addresses = DETECTOR_ADDRESSES
@@ -402,7 +405,6 @@ class ElectronMicroscope(ScanningBeamInstrument):
         OptiSTEM's quality: Bad, Improved or Good); {} from a routine that reports nothing."""
         return json.dumps(self._auto_focus() or {})
 
-    # Operator only until reviewed: an agent is not given these (docs/Microscopy/modify_auto_script_microscope.md lists them).
     @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON of RunStemAutoFocusSettings fields to set (scanning_detector, size, dwell_time, auto_stigmate, accuracy_level); {} for the defaults.',
              risk="high", operator_only=True, role="optics.focus")
     @hardware_call()

@@ -82,6 +82,7 @@ class CEOSCorrector(CORRECTOR):
         self._correct_aberration(name, values)  # a CEOS refusal raises in _call
 
     def _call(self, method: str, params: Optional[dict] = None) -> str:
+        """A refusal comes back as the JSON-RPC error member (_rpc_error) and is raised, so it never reads as success."""
         payload = {
             "jsonrpc": "2.0",
             "id": self._message_id,
@@ -107,7 +108,6 @@ class CEOSCorrector(CORRECTOR):
             self.set_state(DevState.FAULT)
             tango.Except.throw_exception("CeosCommError", str(exc), "CEOSCorrector._call()")
             raise RuntimeError("unreachable")
-        # A refusal comes back as the JSON-RPC error member and must not read as success.
         error = self._rpc_error(result)
         self.set_state(DevState.ON)
         if error is not None:

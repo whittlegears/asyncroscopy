@@ -99,9 +99,11 @@ def is_safe_stop(command: str, probe: bool = False) -> bool:
 
     "off" counts only as the last word (beam_off, lamp_off); "off_axis" and "kick_off" are not stops.
     A bare retract or withdraw counts only on a probe device (``probe``; see ``is_probe_device``).
+
+    "beam" then "stop" names the beamstop, so the two count as one noun. A motion counts as stopped only after the verb:
+    abort_approach stops, approach_stop approaches.
     """
     ordered = [w for w in _word_list(command) if w not in MODIFIERS]
-    # "beam" then "stop" names the beamstop, so the two count as one noun.
     for i in range(len(ordered) - 1, 0, -1):
         if ordered[i - 1] == "beam" and ordered[i] == "stop":
             ordered[i - 1:i + 1] = ["beamstop"]
@@ -116,7 +118,6 @@ def is_safe_stop(command: str, probe: bool = False) -> bool:
         return False
     verb_at = ordered.index(verbs[0])
     before, after = set(ordered[:verb_at]), set(ordered[verb_at + 1:])
-    # A motion is stopped only after the verb: abort_approach stops, approach_stop approaches.
     if verbs[0] == "off":  # a bare Off cuts power; a stage loses holding torque
         return bool(before) and before <= OFF_OBJECTS
     if verbs[0] == "disengage":
