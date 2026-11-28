@@ -133,6 +133,11 @@ def unsupported(device: object, what: str) -> None:
     )
 
 
+def _has_database_server() -> bool:
+    """A file database (the test contexts) or no database cannot list properties: the call reaches a nil CORBA reference."""
+    return bool(tango.Util._UseDb and not tango.Util._FileDb)
+
+
 class ScanningBeamInstrument(Instrument):
     """A blankable beam rastered over a field of view on a stage: the public commands every backend shares."""
 
@@ -223,8 +228,10 @@ class ScanningBeamInstrument(Instrument):
 
     def _configured_addresses(self) -> dict[str, str]:
         """Every ``<name>_device_address`` property the Tango database holds for this device, declared or not, as
-        {name: address}. Empty without a database (tests, no-DB mode)."""
+        {name: address}. Empty without a database server (tests, file or no-DB mode)."""
         suffix = "_device_address"
+        if not _has_database_server():
+            return {}
         try:
             db = tango.Util.instance(False).get_database()
         except tango.DevFailed:
