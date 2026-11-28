@@ -21,8 +21,8 @@ import h5py
 import numpy as np
 
 from pyTEMlib.image_tools import image_mosaic as mosaic
-from pyTEMlib.analysis_server import map_store
-from pyTEMlib.analysis_server.map_store import MapStore
+from pytemlib_mcp.analysis_server import map_store
+from pytemlib_mcp.analysis_server.map_store import MapStore
 
 here = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("mosaic_scale", here / "mosaic_scale.py")

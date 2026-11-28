@@ -42,8 +42,8 @@ class InProcessAnalysis:
     """the analysis server's map tools behind the same calls the Mapper makes to the analysis server."""
 
     def __init__(self, roots):
-        from pyTEMlib.analysis_server.map_store import MapStore
-        from pyTEMlib.analysis_server.map_tools import MapTools
+        from pytemlib_mcp.analysis_server.map_store import MapStore
+        from pytemlib_mcp.analysis_server.map_tools import MapTools
 
         self.tools = MapTools(MapStore(local_roots=roots))
         self.calls = []

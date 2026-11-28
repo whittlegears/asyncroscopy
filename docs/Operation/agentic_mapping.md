@@ -95,7 +95,7 @@ Then stitch with the analysis server (`assemble_map`), or in Python with `pyTEMl
 
 ## Exploring a map
 
-`score_map` ranks regions with a scorer and adds the best as points of interest with a reason and the scorer's version. The `baseline` scorer looks for contrast and sharp edges. Add your own (a trained model, rules, an LLM judge) by implementing `score(region, metadata) -> (value, reason)` and registering the class (with `name`, `version` and `description`) under the `asyncroscopy.scorers` entry point, or with `@SCORERS.register` (`from pyTEMlib.analysis_server.map_tools import SCORERS`) in a module `ASYNCROSCOPY_PLUGINS` names; see pyTEMlib's `pyTEMlib/analysis_server/map_tools.py`.
+`score_map` ranks regions with a scorer and adds the best as points of interest with a reason and the scorer's version. The `baseline` scorer looks for contrast and sharp edges. Add your own (a trained model, rules, an LLM judge) by implementing `score(region, metadata) -> (value, reason)` and registering the class (with `name`, `version` and `description`) under the `asyncroscopy.scorers` entry point, or with `@SCORERS.register` (`from pytemlib_mcp.analysis_server.map_tools import SCORERS`) in a module `ASYNCROSCOPY_PLUGINS` names; see pyTEMlib's `pyTEMlib/analysis_server/map_tools.py`.
 
 ## Testing a workflow on the twin before the instrument
 

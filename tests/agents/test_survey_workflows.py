@@ -9,7 +9,7 @@ import pytest
 
 from asyncroscopy.workflows import get_workflow
 from asyncroscopy.workflows.runner import resume_workflow, run_workflow
-from pyTEMlib.analysis_server.map_tools import MapTools
+from pytemlib_mcp.analysis_server.map_tools import MapTools
 
 from test_workflows import run, twin
 

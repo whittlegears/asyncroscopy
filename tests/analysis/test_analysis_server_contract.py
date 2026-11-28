@@ -13,11 +13,11 @@ from asyncroscopy.contracts import ENVELOPE_VERSION, load as load_schema
 from asyncroscopy.core import names
 from asyncroscopy.core.fileio import SequencedAppender
 from asyncroscopy.trace.writer import read_tool_log
-from pyTEMlib.analysis_server import environment, fileio
-from pyTEMlib.analysis_server import names as served_names
-from pyTEMlib.analysis_server.frames import register as register_frames
-from pyTEMlib.analysis_server.jobs import JobRunner
-from pyTEMlib.analysis_server.tool_log import ToolCallLog
+from pytemlib_mcp.analysis_server import environment, fileio
+from pytemlib_mcp.analysis_server import names as served_names
+from pytemlib_mcp.analysis_server.frames import register as register_frames
+from pytemlib_mcp.analysis_server.jobs import JobRunner
+from pytemlib_mcp.analysis_server.tool_log import ToolCallLog
 
 
 def test_the_server_uses_asyncroscopys_headers_job_states_and_envelope_version():

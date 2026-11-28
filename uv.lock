@@ -479,7 +479,8 @@ dependencies = [
     { name = "pyqt6" },
     { name = "pyro5" },
     { name = "pytango" },
-    { name = "pytemlib", extra = ["server"] },
+    { name = "pytemlib" },
+    { name = "pytemlib-mcp" },
     { name = "pyyaml" },
     { name = "scifireaders" },
     { name = "sidpy" },
@@ -564,7 +565,8 @@ requires-dist = [
     { name = "pyqt6", specifier = ">=6.8,<6.10" },
     { name = "pyro5", specifier = ">=5.17" },
     { name = "pytango", specifier = "==10.1.2" },
-    { name = "pytemlib", extras = ["server"], git = "https://github.com/whittlegears/pyTEMlib.git?rev=76c39508932040b2bb18636923162c2b07da6f26" },
+    { name = "pytemlib", git = "https://github.com/whittlegears/pyTEMlib.git?rev=30721ac4a451a4b688c2490b26ad5f398da59b20" },
+    { name = "pytemlib-mcp", git = "https://github.com/whittlegears/pyTEMlib.git?subdirectory=pytemlib_mcp&rev=30721ac4a451a4b688c2490b26ad5f398da59b20" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.2" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "quantem", marker = "extra == 'diffraction'", specifier = ">=0.1.9" },
@@ -7104,10 +7106,9 @@ wheels = [
 [[package]]
 name = "pytemlib"
 version = "0.2026.9.0"
-source = { git = "https://github.com/whittlegears/pyTEMlib.git?rev=76c39508932040b2bb18636923162c2b07da6f26#76c39508932040b2bb18636923162c2b07da6f26" }
+source = { git = "https://github.com/whittlegears/pyTEMlib.git?rev=30721ac4a451a4b688c2490b26ad5f398da59b20#30721ac4a451a4b688c2490b26ad5f398da59b20" }
 dependencies = [
     { name = "ase" },
-    { name = "fastmcp" },
     { name = "ipympl" },
     { name = "jupyter" },
     { name = "jupyterlab" },
@@ -7116,7 +7117,6 @@ dependencies = [
     { name = "nodejs" },
     { name = "npm" },
     { name = "numpy" },
-    { name = "ollama" },
     { name = "pandas" },
     { name = "pillow" },
     { name = "pip" },
@@ -7134,11 +7134,15 @@ dependencies = [
     { name = "xraylib" },
 ]
 
-[package.optional-dependencies]
-server = [
+[[package]]
+name = "pytemlib-mcp"
+version = "0.1.0"
+source = { git = "https://github.com/whittlegears/pyTEMlib.git?subdirectory=pytemlib_mcp&rev=30721ac4a451a4b688c2490b26ad5f398da59b20#30721ac4a451a4b688c2490b26ad5f398da59b20" }
+dependencies = [
     { name = "dask" },
     { name = "fastmcp" },
     { name = "h5py" },
+    { name = "pytemlib" },
     { name = "tiled", extra = ["client"] },
 ]
 

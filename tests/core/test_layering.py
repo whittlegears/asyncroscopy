@@ -53,6 +53,6 @@ def test_core_imports_nothing_from_asyncroscopy():
 
 
 def test_the_analysis_server_is_pytemlibs_and_loads_nothing_of_asyncroscopy():
-    """The analysis server asyncroscopy launches (pyTEMlib.analysis_server) runs without asyncroscopy; asyncroscopy only
+    """The analysis server asyncroscopy launches (pytemlib_mcp.analysis_server) runs without asyncroscopy; asyncroscopy only
     starts it and calls it over MCP."""
-    assert loaded_by("pyTEMlib.analysis_server", "asyncroscopy") == []
+    assert loaded_by("pytemlib_mcp.analysis_server", "asyncroscopy") == []
